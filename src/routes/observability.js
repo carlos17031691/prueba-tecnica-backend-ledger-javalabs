@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { enTransaccion } from '../db/pool.js';
 import { procesarEventoEnTx } from '../domain/eventProcessor.js';
 
@@ -47,7 +48,16 @@ export async function rutasOperacion(app, { config, pool }) {
   // 3. POST /admin/events/:id/reprocess: reprocesa evento fallido
   app.post('/admin/events/:id/reprocess', async (req, reply) => {
     const adminToken = req.headers['x-admin-token'];
-    if (!config.adminToken || adminToken !== config.adminToken) {
+    
+    // Comparación segura en tiempo constante para mitigar timing attacks
+    const tokenValido = (() => {
+      if (!config.adminToken || typeof adminToken !== 'string') return false;
+      const hashEsperado = createHash('sha256').update(config.adminToken).digest();
+      const hashRecibido = createHash('sha256').update(adminToken).digest();
+      return timingSafeEqual(hashEsperado, hashRecibido);
+    })();
+
+    if (!tokenValido) {
       return reply.code(401).send({ error: 'unauthorized', message: 'Token de administrador inválido' });
     }
 

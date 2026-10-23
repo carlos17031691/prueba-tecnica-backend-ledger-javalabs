@@ -1,27 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { hashApiKey } from '../auth/apiKey.js';
+import { crearAutenticadorComercio } from '../auth/middleware.js';
 import { enTransaccion } from '../db/pool.js';
 import { formatearMonto, parsearMonto } from '../domain/money.js';
 
 export async function rutasPayouts(app, { pool }) {
-  async function autenticarComercio(req, reply) {
-    const apiKey = req.headers['x-api-key'];
-    if (!apiKey) {
-      return reply.code(401).send({ error: 'unauthorized', message: 'Falta header x-api-key' });
-    }
-
-    const hash = hashApiKey(apiKey);
-    const { rows } = await pool.query(
-      'SELECT id, name, commission_bps FROM merchants WHERE api_key_hash = $1',
-      [hash],
-    );
-
-    if (rows.length === 0) {
-      return reply.code(401).send({ error: 'unauthorized', message: 'API key inválida' });
-    }
-
-    req.merchant = rows[0];
-  }
+  const autenticarComercio = crearAutenticadorComercio(pool);
 
   // B1: POST /payouts con Idempotency-Key
   app.post('/payouts', { preHandler: autenticarComercio }, async (req, reply) => {

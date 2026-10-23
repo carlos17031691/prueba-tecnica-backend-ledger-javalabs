@@ -1,26 +1,8 @@
-import { hashApiKey } from '../auth/apiKey.js';
+import { crearAutenticadorComercio } from '../auth/middleware.js';
 import { formatearMonto } from '../domain/money.js';
 
 export async function rutasConsultas(app, { pool }) {
-  // Hook de autenticación por header x-api-key
-  async function autenticarComercio(req, reply) {
-    const apiKey = req.headers['x-api-key'];
-    if (!apiKey) {
-      return reply.code(401).send({ error: 'unauthorized', message: 'Falta header x-api-key' });
-    }
-
-    const hash = hashApiKey(apiKey);
-    const { rows } = await pool.query(
-      'SELECT id, name, commission_bps FROM merchants WHERE api_key_hash = $1',
-      [hash],
-    );
-
-    if (rows.length === 0) {
-      return reply.code(401).send({ error: 'unauthorized', message: 'API key inválida' });
-    }
-
-    req.merchant = rows[0];
-  }
+  const autenticarComercio = crearAutenticadorComercio(pool);
 
   // 1. GET /merchants/me/balance
   app.get('/merchants/me/balance', { preHandler: autenticarComercio }, async (req, reply) => {
@@ -50,7 +32,14 @@ export async function rutasConsultas(app, { pool }) {
   app.get('/merchants/me/movements', { preHandler: autenticarComercio }, async (req, reply) => {
     const merchantId = req.merchant.id;
     const limit = Math.min(Math.max(Number.parseInt(req.query.limit ?? '20', 10), 1), 100);
-    const cursor = req.query.cursor ? Buffer.from(req.query.cursor, 'base64').toString('utf8') : null;
+    
+    let cursor = null;
+    if (req.query.cursor) {
+      cursor = Buffer.from(req.query.cursor, 'base64').toString('utf8');
+      if (!/^\d+$/.test(cursor)) {
+        return reply.code(400).send({ error: 'bad_request', message: 'Cursor inválido' });
+      }
+    }
 
     let query = `
       SELECT id, kind, transaction_id, event_id, gross_cents, fee_cents, amount_cents, created_at
