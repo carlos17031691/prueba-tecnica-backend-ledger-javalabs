@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import Fastify from 'fastify';
 import { rutasWebhooks } from './webhooks/routes.js';
+import { rutasConsultas } from './routes/queries.js';
 
 // Arma la aplicación Fastify. Se separa de server.js para poder levantarla en los tests.
 export function crearApp({ config, pool, logger = true }) {
@@ -20,5 +21,6 @@ export function crearApp({ config, pool, logger = true }) {
   });
 
   app.register(rutasWebhooks, { config, pool });
+  app.register(rutasConsultas, { pool });
   return app;
 }
