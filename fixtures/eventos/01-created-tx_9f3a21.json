@@ -1,0 +1,1 @@
+{"event_id":"evt_01JB7Q6A1C","type":"payment.created","occurred_at":"2026-10-23T14:01:02Z","data":{"transaction_id":"tx_9f3a21","merchant_id":"m_001","amount":"15000.00","currency":"ARS"}}

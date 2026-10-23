@@ -1,0 +1,1 @@
+{"event_id":"evt_01JB7W0C3S","type":"payment.created","occurred_at":"2026-10-23T15:20:00Z","data":{"transaction_id":"tx_d0a7e2","merchant_id":"m_001","amount":"120.00","currency":"USD"}}

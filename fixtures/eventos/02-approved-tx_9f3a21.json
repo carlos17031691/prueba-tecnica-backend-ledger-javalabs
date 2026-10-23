@@ -1,0 +1,11 @@
+{
+  "type": "payment.approved",
+  "event_id": "evt_01JB7Q8M2K",
+  "data": {
+    "currency": "ARS",
+    "amount": "15000.00",
+    "merchant_id": "m_001",
+    "transaction_id": "tx_9f3a21"
+  },
+  "occurred_at": "2026-10-23T14:05:11Z"
+}
