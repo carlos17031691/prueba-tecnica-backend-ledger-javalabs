@@ -1,0 +1,72 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ledger
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ledger"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  migrate-and-seed:
+    build: .
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/ledger
+      MERCHANT_API_KEY: ${MERCHANT_API_KEY:-mk_test_m001_cambiar}
+      SEED_MERCHANT_ID: ${SEED_MERCHANT_ID:-m_001}
+      SEED_COMMISSION_BPS: ${SEED_COMMISSION_BPS:-250}
+    command: sh -c "node src/db/migrate.js && node src/db/seed.js"
+
+  api:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      migrate-and-seed:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+    environment:
+      PORT: 3000
+      HOST: 0.0.0.0
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/ledger
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-cambiar-por-un-secreto-largo}
+      WEBHOOK_TOLERANCIA_SEG: ${WEBHOOK_TOLERANCIA_SEG:-300}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-cambiar-token-admin}
+      API_DB_POOL_SIZE: ${API_DB_POOL_SIZE:-25}
+    sysctls:
+      net.core.somaxconn: 8192
+
+  worker:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      migrate-and-seed:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/ledger
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-cambiar-por-un-secreto-largo}
+      WORKER_DB_POOL_SIZE: ${WORKER_DB_POOL_SIZE:-15}
+      WORKER_CONCURRENCIA: ${WORKER_CONCURRENCIA:-8}
+      WORKER_MAX_INTENTOS: ${WORKER_MAX_INTENTOS:-5}
+    command: ["node", "src/worker.js"]
+
+volumes:
+  pgdata:
