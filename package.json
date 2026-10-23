@@ -1,0 +1,28 @@
+{
+  "name": "ledger-pagos",
+  "version": "1.0.0",
+  "description": "Servicio que recibe webhooks de un PSP y los aplica sobre un ledger de saldos por comercio",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "worker": "node src/worker.js",
+    "migrate": "node src/db/migrate.js",
+    "seed": "node src/db/seed.js",
+    "test": "node --test --test-concurrency=1 test/",
+    "test:unit": "node --test test/unit/",
+    "test:integration": "node --test --test-concurrency=1 test/integration/"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "fastify": "^4.28.1",
+    "pg": "^8.13.1",
+    "pino": "^9.5.0"
+  },
+  "devDependencies": {
+    "@testcontainers/postgresql": "^10.13.2"
+  }
+}
