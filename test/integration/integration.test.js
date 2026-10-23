@@ -221,11 +221,11 @@ describe('Tests de integración contra DB real', () => {
       });
       await client.query('COMMIT');
 
-      // 2. Insertar el evento approved en inbox_events
+      // 2. Insertar el evento approved en inbox_events con next_attempt_at en el futuro lejano para que el worker no lo tome
       await client.query(
         `INSERT INTO inbox_events
-           (event_id, type, transaction_id, merchant_id, amount_cents, currency, occurred_at, payload, payload_hash)
-         VALUES ($1, 'payment.approved', $2, $3, $4, 'ARS', now(), '{}', 'hash_test')`,
+           (event_id, type, transaction_id, merchant_id, amount_cents, currency, occurred_at, payload, payload_hash, next_attempt_at)
+         VALUES ($1, 'payment.approved', $2, $3, $4, 'ARS', now(), '{}', 'hash_test', clock_timestamp() + interval '1 hour')`,
         [evId, txId, MERCHANT_ID, amountCents.toString()],
       );
 
@@ -286,12 +286,12 @@ describe('Tests de integración contra DB real', () => {
       });
       await cSetup.query('COMMIT');
 
-      // Insertar ambos eventos en el inbox
+      // Insertar ambos eventos en el inbox con next_attempt_at en el futuro para que el worker de fondo no los consuma
       await cSetup.query(
-        `INSERT INTO inbox_events (event_id, type, transaction_id, merchant_id, amount_cents, currency, occurred_at, payload, payload_hash)
+        `INSERT INTO inbox_events (event_id, type, transaction_id, merchant_id, amount_cents, currency, occurred_at, payload, payload_hash, next_attempt_at)
          VALUES
-           ($1, 'payment.approved', $3, $4, $5, 'ARS', now(), '{}', 'h1'),
-           ($2, 'payment.reversed', $3, $4, $5, 'ARS', now(), '{}', 'h2')`,
+           ($1, 'payment.approved', $3, $4, $5, 'ARS', now(), '{}', 'h1', clock_timestamp() + interval '1 hour'),
+           ($2, 'payment.reversed', $3, $4, $5, 'ARS', now(), '{}', 'h2', clock_timestamp() + interval '1 hour')`,
         [`evt_app_${txId}`, `evt_rev_${txId}`, txId, MERCHANT_ID, amountCents.toString()],
       );
     } finally {
