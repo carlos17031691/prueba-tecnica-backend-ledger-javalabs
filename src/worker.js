@@ -57,7 +57,7 @@ async function loopWorker(id) {
       const huboTrabajo = await tomarYProcesarSiguiente();
       if (!huboTrabajo) {
         // Pausa breve si no hay eventos
-        await new Promise((r) => setTimeout(r, 200));
+        await new Promise((r) => setTimeout(r, 20));
       }
     } catch (err) {
       console.error(`[Worker ${id}] Error:`, err.message);
