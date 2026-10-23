@@ -29,9 +29,14 @@ Bloque | Fecha y hora            | Qué hice                                    
         |                         | locales. Ejecución de la suite completa de 55 tests con 100% de | transaccional; se aisló la prueba configurando next_attempt_at
         |                         | éxito.                                                          | en el futuro lejano para que solo el test controle la
         |                         |                                                                 | ejecución.
+--------|-------------------------|-----------------------------------------------------------------------------------|------------------------------------------------------------------------------------
+    3   | 2026-10-2312:45 a 13:25 | Análisis detallado de las respuestas arquitectónicas y de construcción para       | Ningún bloqueo técnico mayor; el foco estuvo en sintetizar las decisiones de
+        |                         | PREGUNTAS.md. Revisión y actualización de CHECKLIST.md marcando los ítems de la   | diseño (locks de Postgres, serialización con pg_advisory_xact_lock, inmutabilidad
+        |                         | Parte A y extensiones B1 y B4. Consolidación de los datos reales de rendimiento   | del ledger con triggers y manejo de eventos diferidos) para responder con claridad
+        |                         | (500 req/s, latencias y tiempos de convergencia) para documentar en SOLUCION.md.  | y concisión cada punto del cuestionario técnico.
+        |                         | Commits incrementales de seguimiento de documentación.                            |
 
-
-• Tiempo total: 1 hora 20 minutos.
+• Tiempo total: 2 horas.
 
 ## Declaración de uso de IA
 
