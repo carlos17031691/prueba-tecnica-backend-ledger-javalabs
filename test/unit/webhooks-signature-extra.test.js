@@ -6,7 +6,7 @@ describe('parsearHeaderFirma', () => {
   test('parsea firma v1 simple', () => {
     const firmas = parsearHeaderFirma('v1=' + 'a'.repeat(64));
     assert.equal(firmas.length, 1);
-    assert.equal(firmas[0].version, 'v1');
+    assert.equal(firmas[0].toString('hex'), 'a'.repeat(64));
   });
 
   test('parsea múltiples firmas separadas por coma', () => {
