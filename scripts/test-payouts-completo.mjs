@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { createHmac } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 
 const BASE = process.env.BASE_URL ?? 'http://localhost:3000';
 const API_KEY = process.env.MERCHANT_API_KEY ?? 'mk_live_1024e44ca85909bb2478f9a8cc7cd18a';
@@ -81,7 +81,7 @@ async function main() {
   await new Promise((r) => setTimeout(r, 4000));
   console.log(JSON.stringify(await getBalance(), null, 2));
 
-  const key = `payout_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+  const key = `payout_${Date.now()}_${randomBytes(4).toString('hex')}`;
 
   console.log('\n[3] POST /payouts sin Idempotency-Key (debe ser 400)...');
   let res = await fetch(`${BASE}/payouts`, {
