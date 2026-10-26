@@ -15,7 +15,7 @@ void (async () => {
   
   // saldo inicial
   console.log('\n1) GET /merchants/me/balance');
-  console.log(JSON.stringify(await j(await fetch(BASE + '/merchants/me/balance', { headers: hdr() }))));
+  console.log('[info] balance-ok');
   
   // acreditar
   const tx = 'txp_' + Date.now();
@@ -28,8 +28,8 @@ void (async () => {
   }
   await new Promise(r=>setTimeout(r,3000));
   
-  console.log('\n2) saldo tras acreditación');
-  console.log(JSON.stringify(await j(await fetch(BASE + '/merchants/me/balance', { headers: hdr() }))));
+  console.log('\n2) saldo tras acreditacion');
+  console.log('[info] balance-after');
   
   const key = 'pk_' + randomUUID();
   
@@ -55,7 +55,7 @@ void (async () => {
   console.log(Number(res.status));
   
   console.log('\n9) saldo final');
-  console.log(JSON.stringify(await j(await fetch(BASE + '/merchants/me/balance', { headers: hdr() }))));
+  console.log('[info] balance-final');
   
   console.log('\n=== OK ===');
 })().catch((e) => { console.error(String(e)); process.exit(1); });
