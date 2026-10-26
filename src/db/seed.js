@@ -3,6 +3,7 @@
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { hashApiKey } from '../auth/apiKey.js';
+import { cargarEnv } from '../config.js';
 
 export async function sembrar({ databaseUrl, merchantId, apiKey, commissionBps }, log = console) {
   const client = new pg.Client({ connectionString: databaseUrl });
@@ -24,6 +25,7 @@ export async function sembrar({ databaseUrl, merchantId, apiKey, commissionBps }
 
 // Uso por línea de comandos: node src/db/seed.js
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  cargarEnv();
   const { DATABASE_URL, MERCHANT_API_KEY } = process.env;
   if (!DATABASE_URL || !MERCHANT_API_KEY) {
     console.error('Faltan DATABASE_URL y/o MERCHANT_API_KEY');

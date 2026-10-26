@@ -31,7 +31,14 @@ export async function rutasConsultas(app, { pool }) {
   // 2. GET /merchants/me/movements (paginado por cursor, más nuevos primero)
   app.get('/merchants/me/movements', { preHandler: autenticarComercio }, async (req, reply) => {
     const merchantId = req.merchant.id;
-    const limit = Math.min(Math.max(Number.parseInt(req.query.limit ?? '20', 10), 1), 100);
+
+    let limit = 20;
+    if (req.query.limit !== undefined) {
+      if (!/^\d+$/.test(req.query.limit)) {
+        return reply.code(400).send({ error: 'bad_request', message: 'Parámetro limit inválido' });
+      }
+      limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10), 1), 100);
+    }
     
     let cursor = null;
     if (req.query.cursor) {

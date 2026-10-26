@@ -5,6 +5,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
+import { cargarEnv } from '../config.js';
 
 const DIR_MIGRACIONES = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'migrations');
 const LOCK_MIGRACIONES = 727_001; // número arbitrario, solo identifica el lock
@@ -46,6 +47,7 @@ export async function migrar(databaseUrl, log = console) {
 
 // Uso por línea de comandos: node src/db/migrate.js
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  cargarEnv();
   if (!process.env.DATABASE_URL) {
     console.error('Falta DATABASE_URL');
     process.exit(1);

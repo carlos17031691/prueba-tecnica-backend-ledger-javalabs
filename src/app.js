@@ -22,6 +22,28 @@ export function crearApp({ config, pool, logger = true }) {
     reply.header('x-correlation-id', req.id);
   });
 
+  // Manejador centralizado de errores para evitar filtrar detalles internos de DB en status 500
+  app.setErrorHandler((error, req, reply) => {
+    if (req.log && typeof req.log.error === 'function') {
+      req.log.error(error);
+    }
+    const status = error.statusCode && error.statusCode >= 400 && error.statusCode < 500
+      ? error.statusCode
+      : (error.validation ? 400 : 500);
+
+    if (status === 500) {
+      return reply.code(500).send({
+        error: 'internal_server_error',
+        message: 'Error interno del servidor',
+      });
+    }
+
+    return reply.code(status).send({
+      error: error.code || 'bad_request',
+      message: error.message,
+    });
+  });
+
   app.register(rutasWebhooks, { config, pool });
   app.register(rutasConsultas, { pool });
   app.register(rutasPayouts, { pool });
