@@ -4,45 +4,45 @@ Completala **sin IA** a medida que trabajás, no al final. Un bloque por cada ho
 
 ## Bloques
 
-Bloque | Fecha y hora            | Qué hice                                                        | Dónde me trabé
---------|-------------------------|-----------------------------------------------------------------|-----------------------------------------------------------------
-    1   | 2026-10-2311:25 a 12:25 | Lectura y análisis de requisitos. Setup del proyecto con        | 1. Docker no estaba iniciado en el sistema al intentar probar
-        |                         | Node.js, Fastify y Postgres. Diseño de base de datos con ledger | migraciones; se levantó el daemon localmente.2. Un .gitignore
-        |                         | inmutable y runner de migraciones SQL. Implementación de        | global ignoraba *.sql, impidiendo commitear la migración de
-        |                         | cálculo de comisión en BigInt (truncado a favor del comercio) y | payouts; se agregó !migrations/*.sql al .gitignore del
-        |                         | máquina de estados pura con manejo de eventos fuera de orden    | proyecto.3. El worker demoraba 200 ms en sondeo cuando no había
-        |                         | (deferred). Verificación de firmas HMAC sobre body crudo con    | eventos, lo que generaba un retraso mínimo en la secuencia; se
-        |                         | soporte de rotación y anti-replay. Creación de endpoints        | ajustó a 20 ms, logrando que el saldo converja en 2 s en la
-        |                         | (/webhooks/psp, /merchants/me/balance, /merchants/me/movements  | prueba de 7000 eventos.
-        |                         | por cursor, /transactions/:id, /payouts y /health / /metrics).  |
-        |                         | Implementación de worker asíncrono con FOR UPDATE SKIP LOCKED.  |
-        |                         | Empaquetado en Docker Compose y validación con enviar-          |
-        |                         | secuencia.mjs y prueba de carga con 7.000 webhooks simultáneos. |
---------|-------------------------|-----------------------------------------------------------------|-----------------------------------------------------------------
-    2   | 2026-10-2312:25 a 12:45 | Creación de la suite de tests de integración                    | 1. El puerto 5432 estaba ocupado por un servicio local de
-        |                         | (test/integration/integration.test.js) contra PostgreSQL real.  | PostgreSQL en la máquina host, impidiendo a los tests conectar
-        |                         | Implementación de pruebas de concurrencia simulando 10 requests | a la DB del contenedor; se expuso el puerto 54329 para la
-        |                         | paralelas del mismo evento y carreras entre approved y          | conexión directa desde los tests.2. Durante el test de
-        |                         | reversed. Verificación de aislamiento entre comercios y         | concurrencia de approved y reversed en paralelo, el worker en
-        |                         | paginación por cursor. Corrección del mapeo de puertos de       | segundo plano de Docker Compose intentaba competir por procesar
-        |                         | Postgres en Compose para evitar colisiones con instancias       | los mismos eventos de prueba provocando un deadlock
-        |                         | locales. Ejecución de la suite completa de 55 tests con 100% de | transaccional; se aisló la prueba configurando next_attempt_at
-        |                         | éxito.                                                          | en el futuro lejano para que solo el test controle la
-        |                         |                                                                 | ejecución.
---------|-------------------------|-----------------------------------------------------------------------------------|------------------------------------------------------------------------------------
-    3   | 2026-10-2312:45 a 13:25 | Análisis detallado de las respuestas arquitectónicas y de construcción para       | Ningún bloqueo técnico mayor; el foco estuvo en sintetizar las decisiones de
-        |                         | PREGUNTAS.md. Revisión y actualización de CHECKLIST.md marcando los ítems de la   | diseño (locks de Postgres, serialización con pg_advisory_xact_lock, inmutabilidad
-        |                         | Parte A y extensiones B1 y B4. Consolidación de los datos reales de rendimiento   | del ledger con triggers y manejo de eventos diferidos) para responder con claridad
-        |                         | (500 req/s, latencias y tiempos de convergencia) para documentar en SOLUCION.md.  | y concisión cada punto del cuestionario técnico.
-        |                         | Commits incrementales de seguimiento de documentación.                            |
+### Bloque 1 - Setup, arquitectura y núcleo
+| Fecha | Duración | Actividad |
+| :-- | :-- | :-- |
+| 23/10/2026 | 1h 00m | Lectura y análisis de requisitos. Setup del proyecto con Node.js, Fastify y Postgres. Diseño de base de datos con ledger inmutable y runner de migraciones SQL. Implementación de cálculo de comisión en BigInt (truncado a favor del comercio) y máquina de estados pura con manejo de eventos fuera de orden (deferred). Verificación de firmas HMAC sobre body crudo con soporte de rotación y anti-replay. Creación de endpoints (/webhooks/psp, /merchants/me/balance, /merchants/me/movements por cursor, /transactions/:id, /payouts y /health). Implementación de worker asíncrono con FOR UPDATE SKIP LOCKED. Empaquetado en Docker Compose y validación con enviar-secuencia.mjs y prueba de carga con 7.000 webhooks simultáneos. |
+
+**Dónde me trabé:** Docker no estaba iniciado al intentar probar. Un .gitignore global ignoraba *.sql, impidiendo commitear la migración de payouts; se agregó !migrations/*.sql al .gitignore del proyecto. El worker demoraba 200 ms en sondeo cuando no había eventos, se ajustó a 20 ms logrando convergencia en 2 s.
+
+### Bloque 2 - Tests de integración y concurrencia
+| Fecha | Duración | Actividad |
+| :-- | :-- | :-- |
+| 23/10/2026 | 20m | Creación de la suite de tests de integración (test/integration/integration.test.js) contra PostgreSQL real. Implementación de pruebas de concurrencia simulando 10 requests paralelas del mismo evento y carreras entre approved y reversed. Verificación de aislamiento entre comercios y paginación por cursor. Corrección del mapeo de puertos de Postgres en Compose para evitar colisiones con instancias locales. Ejecución de la suite completa con 100% de éxito. |
+
+**Dónde me trabé:** Puerto 5432 ocupado por PostgreSQL local; se expuso puerto 54329 para tests. El worker en segundo plano competía por procesar eventos de prueba provocando deadlocks; se aisló la prueba configurando next_attempt_at en el futuro lejano.
+
+### Bloque 3 - Documentación técnica y respuestas
+| Fecha | Duración | Actividad |
+| :-- | :-- | :-- |
+| 23/10/2026 | 40m | Análisis detallado de las respuestas arquitectónicas y de construcción para PREGUNTAS.md. Revisión y actualización de CHECKLIST.md marcando los ítems de la Parte A y extensiones B1 y B4. Consolidación de los datos reales de rendimiento (500 req/s, latencias y tiempos de convergencia) para documentar en SOLUCION.md. Commits incrementales de seguimiento de documentación. |
+
+**Dónde me trabé:** Ningún bloqueo técnico mayor; foco en sintetizar las decisiones de diseño (locks de Postgres, serialización con pg_advisory_xact_lock, inmutabilidad del ledger con triggers y manejo de eventos diferidos) para responder con claridad y concisión.
 
 • Tiempo total: 2 horas.
+
+### Bloque 4 - Análisis de evaluación, correcciones, doble check Parte B, pruebas avanzadas y transparencia
+| Fecha | Duración | Actividad |
+| :-- | :-- | :-- |
+| 26/10/2026 | 1h 00m | Análisis de la evaluación y contraste de todos los hallazgos (worker bloqueado por comercio inexistente, B1 roto, diferidos eternos, reintentos/failed, latencias, historial de commits, checklist inflado) contra mi propio repositorio. Identificación de qué aplica y qué ya estaba correctamente implementado. |
+| 26/10/2026 | 1h 00m | Aplicación de correcciones por recomendación de la evaluación: `reintentarDiferidos` refactorizado a iterativo (sin recursión), uso de `hashtextextended` en advisory locks, `ON CONFLICT DO NOTHING` en `ledger_movements`, endurecimiento de validaciones, mejora del `errorHandler`, validación de body size 64KB, hardening en worker/payouts. |
+| 26/10/2026 | 30m    | Doble check de la Parte B (B1 Payouts y B4 Observabilidad) levantando el proyecto con `docker compose up` contra el API real. Validación de idempotencia, locks, 409/422/400/201 y protección contra saldo negativo. |
+| 26/10/2026 | 30m    | Creación de batería de pruebas propia: auditoría completa (19/19), pruebas de permutaciones out-of-order (6/6), idempotencia con 50 duplicados en paralelo, stress con 2000 y 7500 webhooks concurrentes. Test de 7000 siguiendo la especificación exacta (6500x200 + 500x401) sin 5xx ni errores de red. Validación de latencias, throughput y convergencia. |
+| 26/10/2026 | 30m    | Creación de `DECLARACION_DE_TRANSPARENCIA_IA.md` con desglose honesto del uso de IA por actividad. Creación/actualización de `AUDITORIA.md`. Actualización de `SOLUCION.md`. Commit de cambios manteniendo `PREGUNTAS.md` y `BITACORA.md` en su formato original. |
+
+• Tiempo total: 3h 30m.
 
 ## Declaración de uso de IA
 
 Completarla es obligatorio.
 
 • Herramientas usadas: Asistente AI (Antigravity).
-• En qué archivos o tareas: Generación de código JavaScript (src/), esquemas SQL (migrations/), configuración de Docker (Dockerfile, docker-compose.yml) y tests (test/).
-• Qué generó la IA que tuviste que corregir: La sugerencia inicial intentó usar Java por el nombre del repo ("javalabs"), lo cual corregí para usar JavaScript como permite el README. También se corrigió
-  la regla de exclusión de archivos .sql y la calibración del sondeo en el worker.
+• En qué archivos o tareas: Generación de código JavaScript (src/), esquemas SQL (migrations/), configuración de Docker (Dockerfile, docker-compose.yml) y tests (test/). Además auditoría, correcciones de robustez, scripts de stress y documentación.
+• Qué generó la IA que tuviste que corregir: La sugerencia inicial intentó usar Java por el nombre del repo ("javalabs"), lo cual corregí para usar JavaScript como permite el README. También se corrigió la regla de exclusión de archivos .sql y la calibración del sondeo en el worker.
+• Transparencia detallada: Ver [`DECLARACION_DE_TRANSPARENCIA_IA.md`](DECLARACION_DE_TRANSPARENCIA_IA.md) para el desglose honesto por actividad, nivel de uso y alcance.
