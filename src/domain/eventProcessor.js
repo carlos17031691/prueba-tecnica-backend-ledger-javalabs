@@ -5,7 +5,8 @@ import { decidir } from './stateMachine.js';
 // Retorna { procesado: boolean, estadoFinal: string, motivo?: string }
 export async function procesarEventoEnTx(client, evento, logger = console, esReintentoDiferido = false) {
   // Lock por transacción usando advisory lock para serializar concurrentes sobre la misma tx
-  await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [evento.transaction_id]);
+  // Usar hashtextextended para reducir colisiones teóricas
+  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 131542391))', [evento.transaction_id]);
 
   // 1. Obtener estado actual de la transacción
   const txRes = await client.query(
@@ -94,7 +95,8 @@ export async function procesarEventoEnTx(client, evento, logger = console, esRei
       await client.query(
         `INSERT INTO ledger_movements
            (merchant_id, kind, transaction_id, event_id, gross_cents, fee_cents, amount_cents)
-         VALUES ($1, 'payment_credit', $2, $3, $4, $5, $6)`,
+         VALUES ($1, 'payment_credit', $2, $3, $4, $5, $6)
+         ON CONFLICT (event_id) DO NOTHING`,
         [evento.merchant_id, evento.transaction_id, evento.event_id, bruto.toString(), comision.toString(), neto.toString()],
       );
     } else if (decision.efecto === 'debitar') {
@@ -118,10 +120,13 @@ export async function procesarEventoEnTx(client, evento, logger = console, esRei
         await client.query(
           `INSERT INTO ledger_movements
              (merchant_id, kind, transaction_id, event_id, gross_cents, fee_cents, amount_cents)
-           VALUES ($1, 'payment_reversal', $2, $3, $4, $5, $6)`,
+           VALUES ($1, 'payment_reversal', $2, $3, $4, $5, $6)
+           ON CONFLICT (event_id) DO NOTHING`,
           [evento.merchant_id, evento.transaction_id, evento.event_id, acreditado.gross_cents, acreditado.fee_cents, montoDebito.toString()],
         );
       }
+      // Si no hay crédito previo (edge case), no se genera movimiento de reversa
+      // pero el estado de la transacción sí cambia a reversed
     }
 
     await client.query(
@@ -143,12 +148,10 @@ export async function procesarEventoEnTx(client, evento, logger = console, esRei
 }
 
 async function reintentarDiferidos(client, transactionId, logger) {
-  // Bucle de punto fijo: mientras haya progreso (al menos un evento procesado),
+  // Bucle de punto fijo iterativo (sin recursión): mientras haya progreso
   // se siguen reintentando los diferidos pendientes sin frenar ante el primero que siga diferido.
-  let huboProgreso = true;
-  while (huboProgreso) {
-    huboProgreso = false;
-
+  const maxIteraciones = 50;
+  for (let iter = 0; iter < maxIteraciones; iter++) {
     const { rows } = await client.query(
       `SELECT event_id, type, transaction_id, merchant_id, amount_cents, currency
        FROM inbox_events
@@ -159,6 +162,7 @@ async function reintentarDiferidos(client, transactionId, logger) {
 
     if (rows.length === 0) break;
 
+    let huboProgresoEnIter = false;
     for (const deferred of rows) {
       // Re-verificar que siga diferido antes de procesar para evitar estados obsoletos
       const checkRes = await client.query(
@@ -171,10 +175,11 @@ async function reintentarDiferidos(client, transactionId, logger) {
 
       const res = await procesarEventoEnTx(client, deferred, logger, true);
       if (res.procesado) {
-        huboProgreso = true;
-        // Al procesar un evento cambió el estado de la transacción; reconsultar la lista actualizada
+        huboProgresoEnIter = true;
         break;
       }
     }
+
+    if (!huboProgresoEnIter) break;
   }
 }

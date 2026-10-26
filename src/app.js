@@ -25,7 +25,7 @@ export function crearApp({ config, pool, logger = true }) {
   // Manejador centralizado de errores para evitar filtrar detalles internos de DB en status 500
   app.setErrorHandler((error, req, reply) => {
     if (req.log && typeof req.log.error === 'function') {
-      req.log.error(error);
+      req.log.error({ err: error }, 'request_error');
     }
     const status = error.statusCode && error.statusCode >= 400 && error.statusCode < 500
       ? error.statusCode
@@ -35,6 +35,14 @@ export function crearApp({ config, pool, logger = true }) {
       return reply.code(500).send({
         error: 'internal_server_error',
         message: 'Error interno del servidor',
+      });
+    }
+
+    // Nunca filtrar detalles internos de errores 4xx que vengan de DB
+    if (error.validation) {
+      return reply.code(400).send({
+        error: 'bad_request',
+        message: 'Solicitud inválida',
       });
     }
 

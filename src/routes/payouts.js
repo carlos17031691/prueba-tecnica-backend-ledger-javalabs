@@ -9,15 +9,18 @@ export async function rutasPayouts(app, { pool }) {
   // B1: POST /payouts con Idempotency-Key
   app.post('/payouts', { preHandler: autenticarComercio }, async (req, reply) => {
     const idempotencyKey = req.headers['idempotency-key'];
-    if (!idempotencyKey || typeof idempotencyKey !== 'string') {
+    if (!idempotencyKey || typeof idempotencyKey !== 'string' || idempotencyKey.trim() === '') {
       return reply.code(400).send({ error: 'bad_request', message: 'Header Idempotency-Key requerido' });
     }
 
     const merchantId = req.merchant.id;
     const body = req.body;
 
-    if (!body || typeof body !== 'object' || !body.amount) {
+    if (!body || typeof body !== 'object' || body.amount === undefined || body.amount === null) {
       return reply.code(400).send({ error: 'bad_request', message: 'Campo amount requerido' });
+    }
+    if (typeof body.amount !== 'string') {
+      return reply.code(400).send({ error: 'bad_request', message: 'Formato de amount inválido o menor a 0' });
     }
 
     let amountCents;
@@ -28,7 +31,8 @@ export async function rutasPayouts(app, { pool }) {
       return reply.code(400).send({ error: 'bad_request', message: 'Formato de amount inválido o menor a 0' });
     }
 
-    const requestHash = createHash('sha256').update(JSON.stringify(body)).digest('hex');
+    // Hash canónico para detectar cambios de payload con misma idempotency key
+    const requestHash = createHash('sha256').update(JSON.stringify({ amount: body.amount })).digest('hex');
 
     // Procesamiento atómico en DB
     const resultado = await enTransaccion(pool, async (client) => {

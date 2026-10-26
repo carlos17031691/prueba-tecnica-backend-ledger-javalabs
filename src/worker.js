@@ -40,11 +40,14 @@ export async function tomarYProcesarSiguiente(p = pool, cfg = config) {
         throw err;
       }
     } catch (err) {
-      const intentos = evento.attempts + 1;
-      const fallido = intentos >= cfg.workerMaxIntentos;
+      const intentosPrevios = Number(evento.attempts ?? 0);
+      const intentos = intentosPrevios + 1;
+      const maxIntentos = Number(cfg.workerMaxIntentos ?? 5);
+      const fallido = intentos >= maxIntentos;
       const estado = fallido ? 'failed' : 'received';
       // Backoff simple para reintentos
       const delaySeg = Math.min(2 ** intentos, 60);
+      const razon = err?.message ? String(err.message).slice(0, 500) : 'unknown_error';
 
       await client.query(
         `UPDATE inbox_events
@@ -53,7 +56,7 @@ export async function tomarYProcesarSiguiente(p = pool, cfg = config) {
              reason = $3,
              next_attempt_at = clock_timestamp() + ($4 || ' seconds')::interval
          WHERE event_id = $5`,
-        [estado, intentos, err.message, delaySeg, evento.event_id],
+        [estado, intentos, razon, delaySeg, evento.event_id],
       );
       return true;
     }

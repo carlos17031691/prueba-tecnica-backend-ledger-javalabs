@@ -7,11 +7,21 @@ import { hashEvento, validarPayload } from './payload.js';
 export async function rutasWebhooks(app, { config, pool }) {
   // En este contexto el body llega como Buffer crudo: la firma se calcula sobre esos bytes exactos.
   app.removeAllContentTypeParsers();
-  app.addContentTypeParser('*', { parseAs: 'buffer' }, (_req, body, done) => done(null, body));
+  app.addContentTypeParser('*', { parseAs: 'buffer' }, (_req, body, done) => {
+    if (Buffer.isBuffer(body) && body.length > 64 * 1024) {
+      const err = new Error('Payload too large');
+      err.statusCode = 413;
+      return done(err);
+    }
+    done(null, body);
+  });
 
   app.post('/webhooks/psp', async (req, reply) => {
     const timestamp = req.headers['x-psp-timestamp'];
     const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+    if (rawBody.length > 64 * 1024) {
+      return reply.code(413).send({ error: 'payload_too_large' });
+    }
 
     if (!timestampValido(timestamp, Math.floor(Date.now() / 1000), config.webhookToleranciaSeg)) {
       req.log.warn({ motivo: 'timestamp_fuera_de_ventana' }, 'webhook rechazado');
@@ -65,7 +75,7 @@ export async function rutasWebhooks(app, { config, pool }) {
         evento.occurred_at,
         payload,
         hash,
-        req.id,
+        req.id ?? null,
       ],
     );
 

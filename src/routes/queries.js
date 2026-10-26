@@ -34,17 +34,33 @@ export async function rutasConsultas(app, { pool }) {
 
     let limit = 20;
     if (req.query.limit !== undefined) {
-      if (!/^\d+$/.test(req.query.limit)) {
+      const limitStr = String(req.query.limit);
+      if (!/^\d+$/.test(limitStr) || limitStr.length > 6) {
         return reply.code(400).send({ error: 'bad_request', message: 'Parámetro limit inválido' });
       }
-      limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10), 1), 100);
+      const parsed = Number.parseInt(limitStr, 10);
+      if (!Number.isFinite(parsed) || parsed < 1 || parsed > 1000) {
+        return reply.code(400).send({ error: 'bad_request', message: 'Parámetro limit inválido' });
+      }
+      limit = Math.min(parsed, 100);
     }
     
     let cursor = null;
     if (req.query.cursor) {
-      cursor = Buffer.from(req.query.cursor, 'base64').toString('utf8');
+      try {
+        cursor = Buffer.from(req.query.cursor, 'base64').toString('utf8');
+      } catch {
+        return reply.code(400).send({ error: 'bad_request', message: 'Cursor inválido' });
+      }
       // El id es BIGSERIAL: un cursor fuera de rango de int8 haría fallar el query en Postgres (500).
-      if (!/^\d+$/.test(cursor) || BigInt(cursor) > 9223372036854775807n) {
+      if (!/^\d+$/.test(cursor) || cursor.length > 19) {
+        return reply.code(400).send({ error: 'bad_request', message: 'Cursor inválido' });
+      }
+      try {
+        if (BigInt(cursor) > 9223372036854775807n || BigInt(cursor) < 0n) {
+          return reply.code(400).send({ error: 'bad_request', message: 'Cursor inválido' });
+        }
+      } catch {
         return reply.code(400).send({ error: 'bad_request', message: 'Cursor inválido' });
       }
     }
