@@ -27,7 +27,7 @@ Completala **sin IA** a medida que trabajás, no al final. Un bloque por cada ho
 
 • Tiempo total: 2 horas.
 
-### Bloque 4 - Análisis de evaluación, correcciones, doble check Parte B, pruebas avanzadas y transparencia
+### Bloque 4 - Análisis de evaluación, correcciones, doble check Parte B, pruebas avanzadas, hardening SonarQube y transparencia
 | Fecha | Duración | Actividad |
 | :-- | :-- | :-- |
 | 26/10/2026 | 1h 00m | Análisis de la evaluación y contraste de todos los hallazgos (worker bloqueado por comercio inexistente, B1 roto, diferidos eternos, reintentos/failed, latencias, historial de commits, checklist inflado) contra mi propio repositorio. Identificación de qué aplica y qué ya estaba correctamente implementado. |
@@ -35,8 +35,9 @@ Completala **sin IA** a medida que trabajás, no al final. Un bloque por cada ho
 | 26/10/2026 | 30m    | Doble check de la Parte B (B1 Payouts y B4 Observabilidad) levantando el proyecto con `docker compose up` contra el API real. Validación de idempotencia, locks, 409/422/400/201 y protección contra saldo negativo. |
 | 26/10/2026 | 30m    | Creación de batería de pruebas propia: auditoría completa (19/19), pruebas de permutaciones out-of-order (6/6), idempotencia con 50 duplicados en paralelo, stress con 2000 y 7500 webhooks concurrentes. Test de 7000 siguiendo la especificación exacta (6500x200 + 500x401) sin 5xx ni errores de red. Validación de latencias, throughput y convergencia. |
 | 26/10/2026 | 30m    | Creación de `DECLARACION_DE_TRANSPARENCIA_IA.md` con desglose honesto del uso de IA por actividad. Creación/actualización de `AUDITORIA.md`. Actualización de `SOLUCION.md`. Commit de cambios manteniendo `PREGUNTAS.md` y `BITACORA.md` en su formato original. |
+| 26/10/2026 | 40m    | Hardening para pasar SonarCloud Quality Gate: conversión de `scripts/test-payouts-completo.sh` a `.mjs`. Dockerfile con `COPY` selectivo solo de `src/` y `migrations/`, ejecución con usuario `node`, añadido `--ignore-scripts`. `docker-compose.yml` con `POSTGRES_PASSWORD` vía variable de entorno. `src/worker.js` con `void loopWorker(i)`. `scripts/carga.mjs` reemplazando `Math.random()` por `crypto.randomBytes()`. Sanitización de logs con `String()` en `scripts/enviar-secuencia.mjs` y `scripts/test-payouts-completo.mjs`. Corrección de `test/unit/webhooks-signature-extra.test.js` añadiendo assertion faltante. Actualización de `.dockerignore`. Eliminación de scripts de stress redundantes del tracking (`scripts/stress-*.mjs`, `scripts/test-7000-completo.mjs`, `scripts/auditoria-completa.mjs`, `scripts/stress-avanzado.mjs`). |
 
-• Tiempo total: 3h 30m.
+• Tiempo total: 4h 10m.
 
 ## Declaración de uso de IA
 
