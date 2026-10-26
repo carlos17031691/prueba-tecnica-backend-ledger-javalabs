@@ -90,6 +90,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   for (let i = 0; i < config.workerConcurrencia; i++) {
     loopWorker(i);
   }
-  process.on('SIGTERM', apagar);
-  process.on('SIGINT', apagar);
+  process.on('SIGTERM', () => { void apagar(); });
+  process.on('SIGINT', () => { void apagar(); });
 }
