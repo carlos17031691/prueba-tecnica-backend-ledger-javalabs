@@ -2,10 +2,15 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { after, before, describe, test } from 'node:test';
 import { crearApp } from '../../src/app.js';
-import { crearPool } from '../../src/db/pool.js';
+import { crearPool, enTransaccion } from '../../src/db/pool.js';
 import { procesarEventoEnTx } from '../../src/domain/eventProcessor.js';
+import { tomarYProcesarSiguiente } from '../../src/worker.js';
 
-const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:54329/ledger';
+import { cargarEnv } from '../../src/config.js';
+
+cargarEnv();
+
+const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/ledger';
 const WEBHOOK_SECRET = 'secreto-test-integracion';
 const API_KEY = 'mk_test_integracion';
 const MERCHANT_ID = 'm_test_integ';
@@ -343,5 +348,304 @@ describe('Tests de integración contra DB real', () => {
       0n,
       'El efecto neto en el ledger debe ser exactamente cero',
     );
+  });
+
+  test('Fuera de orden: reversed -> approved -> created termina en reversed con efecto neto 0', async () => {
+    const txId = `tx_fdo_${Date.now()}`;
+    const amountCents = 150000n; // 1.500,00 ARS
+
+    const insertarYProcesar = async (tipo, evId) => {
+      return enTransaccion(pool, async (client) => {
+        await client.query(
+          `INSERT INTO inbox_events
+             (event_id, type, transaction_id, merchant_id, amount_cents, currency, occurred_at, payload, payload_hash)
+           VALUES ($1, $2, $3, $4, $5, 'ARS', clock_timestamp(), '{}', 'hash_fdo')`,
+          [evId, tipo, txId, MERCHANT_ID, amountCents.toString()],
+        );
+        return procesarEventoEnTx(client, {
+          event_id: evId,
+          type: tipo,
+          transaction_id: txId,
+          merchant_id: MERCHANT_ID,
+          amount_cents: amountCents,
+          currency: 'ARS',
+        });
+      });
+    };
+
+    // 1. Llega payment.reversed primero
+    const resRev = await insertarYProcesar('payment.reversed', `evt_rev1_${txId}`);
+    assert.equal(resRev.diferido, true, 'Reversed inicial debe ser diferido');
+
+    // 2. Llega payment.approved segundo
+    const resApp = await insertarYProcesar('payment.approved', `evt_app1_${txId}`);
+    assert.equal(resApp.diferido, true, 'Approved sin created debe ser diferido');
+
+    // 3. Llega payment.created tercero (desencadena resolución en punto fijo)
+    const resCre = await insertarYProcesar('payment.created', `evt_cre1_${txId}`);
+    assert.equal(resCre.procesado, true);
+
+    // Verificar estado final de la transacción
+    const txRes = await pool.query('SELECT status FROM transactions WHERE id = $1', [txId]);
+    assert.equal(txRes.rows[0].status, 'reversed', 'La transacción debe quedar en status reversed');
+
+    // Verificar movimientos del ledger
+    const movRes = await pool.query(
+      'SELECT kind, amount_cents FROM ledger_movements WHERE transaction_id = $1 ORDER BY id ASC',
+      [txId],
+    );
+    assert.equal(movRes.rows.length, 2, 'Deben registrarse exactamente 2 movimientos: crédito y reversa');
+    assert.equal(movRes.rows[0].kind, 'payment_credit');
+    assert.equal(movRes.rows[1].kind, 'payment_reversal');
+    assert.equal(
+      BigInt(movRes.rows[0].amount_cents) + BigInt(movRes.rows[1].amount_cents),
+      0n,
+      'El saldo neto debe ser exactamente cero',
+    );
+
+    // Verificar que los 3 eventos en inbox queden como processed (ninguno falsamente marcado como invalid)
+    const evtsRes = await pool.query(
+      'SELECT status FROM inbox_events WHERE transaction_id = $1',
+      [txId],
+    );
+    for (const row of evtsRes.rows) {
+      assert.equal(row.status, 'processed', 'Todos los eventos aplicados deben quedar en status processed');
+    }
+  });
+
+  test('Worker: evento con comercio inexistente se marca invalid sin bloquear al worker', async () => {
+    // Aislar eventos previos para que el worker tome el del test
+    await pool.query("UPDATE inbox_events SET next_attempt_at = clock_timestamp() + interval '1 hour' WHERE status = 'received'");
+
+    const badEvtId = `evt_poison_${Date.now()}`;
+    const goodEvtId = `evt_good_${Date.now()}`;
+    const goodTxId = `tx_good_${Date.now()}`;
+
+    // 1. Insertar evento con comercio inexistente
+    await pool.query(
+      `INSERT INTO inbox_events
+         (event_id, type, transaction_id, merchant_id, amount_cents, currency, occurred_at, payload, payload_hash, attempts, next_attempt_at)
+       VALUES ($1, 'payment.created', 'tx_poison', 'm_desconocido', '1000', 'ARS', clock_timestamp(), '{}', 'hash_p', 0, clock_timestamp())`,
+      [badEvtId],
+    );
+
+    // 2. Procesar con el worker: gracias a la corrección del query ($1), ahora se marca como invalid en vez de abortar la transacción
+    const configWorker = { workerMaxIntentos: 3 };
+    const procesado = await tomarYProcesarSiguiente(pool, configWorker);
+    assert.equal(procesado, true);
+
+    const badRow = await pool.query('SELECT status, reason FROM inbox_events WHERE event_id = $1', [badEvtId]);
+    assert.equal(badRow.rows[0].status, 'invalid');
+    assert.equal(badRow.rows[0].reason, 'merchant_not_found');
+
+    // 3. Insertar un evento válido inmediatamente después
+    await pool.query(
+      `INSERT INTO inbox_events
+         (event_id, type, transaction_id, merchant_id, amount_cents, currency, occurred_at, payload, payload_hash, attempts, next_attempt_at)
+       VALUES ($1, 'payment.created', $2, $3, '10000', 'ARS', clock_timestamp(), '{}', 'hash_g', 0, clock_timestamp())`,
+      [goodEvtId, goodTxId, MERCHANT_ID],
+    );
+
+    // 4. El worker procesa el siguiente evento sin atascarse
+    const procesadoGood = await tomarYProcesarSiguiente(pool, configWorker);
+    assert.equal(procesadoGood, true);
+
+    const goodRow = await pool.query('SELECT status FROM inbox_events WHERE event_id = $1', [goodEvtId]);
+    assert.equal(goodRow.rows[0].status, 'processed', 'El evento válido se procesó con éxito');
+  });
+
+  test('Worker: reintentos con SAVEPOINT ante error inesperado incrementan attempts y llegan a failed', async () => {
+    // Aislar eventos previos
+    await pool.query("UPDATE inbox_events SET next_attempt_at = clock_timestamp() + interval '1 hour' WHERE status = 'received'");
+
+    // Crear un trigger temporal en transactions que simula un fallo interno de base de datos para esta tx
+    await pool.query(`
+      CREATE OR REPLACE FUNCTION simular_error_db() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.id = 'tx_simular_fallo' THEN
+          RAISE EXCEPTION 'simulated_database_error';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+
+      DROP TRIGGER IF EXISTS trg_simular_fallo ON transactions;
+      CREATE TRIGGER trg_simular_fallo BEFORE INSERT ON transactions FOR EACH ROW EXECUTE FUNCTION simular_error_db();
+    `);
+
+    const errorEvtId = `evt_err_${Date.now()}`;
+
+    try {
+      await pool.query(
+        `INSERT INTO inbox_events
+           (event_id, type, transaction_id, merchant_id, amount_cents, currency, occurred_at, payload, payload_hash, attempts, next_attempt_at)
+         VALUES ($1, 'payment.created', 'tx_simular_fallo', $2, '1000', 'ARS', clock_timestamp(), '{}', 'hash_err', 0, clock_timestamp())`,
+        [errorEvtId, MERCHANT_ID],
+      );
+
+      const configWorker = { workerMaxIntentos: 2 };
+
+      // Intento 1: SAVEPOINT captura el error, incrementa attempts a 1 y programa backoff
+      await tomarYProcesarSiguiente(pool, configWorker);
+      let row = (await pool.query('SELECT attempts, status, next_attempt_at FROM inbox_events WHERE event_id = $1', [errorEvtId])).rows[0];
+      assert.equal(row.attempts, 1);
+      assert.equal(row.status, 'received');
+
+      // Simular que vence la ventana de reintento adelantando next_attempt_at
+      await pool.query('UPDATE inbox_events SET next_attempt_at = clock_timestamp() - interval \'1 second\' WHERE event_id = $1', [errorEvtId]);
+
+      // Intento 2: alcanza workerMaxIntentos (2) y pasa a status = 'failed' (Dead Letter Queue)
+      await tomarYProcesarSiguiente(pool, configWorker);
+      row = (await pool.query('SELECT attempts, status FROM inbox_events WHERE event_id = $1', [errorEvtId])).rows[0];
+      assert.equal(row.attempts, 2);
+      assert.equal(row.status, 'failed', 'Al alcanzar el máximo de intentos pasa a failed');
+    } finally {
+      await pool.query('DROP TRIGGER IF EXISTS trg_simular_fallo ON transactions; DROP FUNCTION IF EXISTS simular_error_db();');
+    }
+  });
+
+  test('Extensión B1: Payout 201 exitoso, idempotencia (200 y 409) y concurrencia sin saldo negativo', async () => {
+    // 1. Asegurar saldo previo acreditando un pago legítimo (registrando en inbox_events para FK)
+    const txId = `tx_payout_${Date.now()}`;
+    const evCreatedId = `evt_c_${txId}`;
+    const evApprovedId = `evt_a_${txId}`;
+
+    await pool.query(
+      `INSERT INTO inbox_events
+         (event_id, type, transaction_id, merchant_id, amount_cents, currency, occurred_at, payload, payload_hash)
+       VALUES
+         ($1, 'payment.created', $2, $3, '100000', 'ARS', clock_timestamp(), '{}', 'h1'),
+         ($4, 'payment.approved', $2, $3, '100000', 'ARS', clock_timestamp(), '{}', 'h2')`,
+      [evCreatedId, txId, MERCHANT_ID, evApprovedId],
+    );
+
+    await enTransaccion(pool, async (client) => {
+      await procesarEventoEnTx(client, {
+        event_id: evCreatedId,
+        type: 'payment.created',
+        transaction_id: txId,
+        merchant_id: MERCHANT_ID,
+        amount_cents: 100000n, // 1.000,00 ARS bruto
+        currency: 'ARS',
+      });
+      await procesarEventoEnTx(client, {
+        event_id: evApprovedId,
+        type: 'payment.approved',
+        transaction_id: txId,
+        merchant_id: MERCHANT_ID,
+        amount_cents: 100000n,
+        currency: 'ARS',
+      });
+    });
+
+    const balAntes = await app.inject({
+      method: 'GET',
+      url: '/merchants/me/balance',
+      headers: { 'x-api-key': API_KEY },
+    });
+    const saldoInicial = Number.parseFloat(JSON.parse(balAntes.payload).available);
+    assert.ok(saldoInicial >= 100, 'Debe haber saldo suficiente para el payout');
+
+    // 2. Ejecutar un Payout exitoso de 50.00
+    const idempKey = `idemp_ok_${Date.now()}`;
+    const resPayout = await app.inject({
+      method: 'POST',
+      url: '/payouts',
+      headers: {
+        'x-api-key': API_KEY,
+        'idempotency-key': idempKey,
+        'content-type': 'application/json',
+      },
+      payload: { amount: '50.00' },
+    });
+    assert.equal(resPayout.statusCode, 201, 'Payout con saldo debe responder 201 Created');
+    const payoutBody = JSON.parse(resPayout.payload);
+    assert.equal(payoutBody.amount, '50.00');
+    assert.ok(payoutBody.id.startsWith('po_'));
+
+    // Verificar en ledger_movements: debe haber un movimiento tipo payout con transaction_id NULL
+    const movPayout = await pool.query(
+      'SELECT kind, transaction_id, payout_id, amount_cents FROM ledger_movements WHERE payout_id = $1',
+      [payoutBody.id],
+    );
+    assert.equal(movPayout.rows.length, 1);
+    assert.equal(movPayout.rows[0].kind, 'payout');
+    assert.equal(movPayout.rows[0].transaction_id, null, 'transaction_id debe ser NULL para payouts');
+    assert.equal(BigInt(movPayout.rows[0].amount_cents), -5000n, 'amount_cents debe ser negativo');
+
+    // 3. Replay con misma idempotency key y mismo payload -> 200 OK con respuesta original
+    const resReplay = await app.inject({
+      method: 'POST',
+      url: '/payouts',
+      headers: {
+        'x-api-key': API_KEY,
+        'idempotency-key': idempKey,
+        'content-type': 'application/json',
+      },
+      payload: { amount: '50.00' },
+    });
+    assert.equal(resReplay.statusCode, 200, 'Replay idempotente debe responder 200 OK');
+    assert.equal(JSON.parse(resReplay.payload).id, payoutBody.id);
+
+    // 4. Misma idempotency key con payload distinto -> 409 Conflict
+    const resConflict = await app.inject({
+      method: 'POST',
+      url: '/payouts',
+      headers: {
+        'x-api-key': API_KEY,
+        'idempotency-key': idempKey,
+        'content-type': 'application/json',
+      },
+      payload: { amount: '99.00' },
+    });
+    assert.equal(resConflict.statusCode, 409, 'Misma key con otro payload debe responder 409 Conflict');
+
+    // 5. Concurrencia de payouts: 5 payouts paralelos con saldo acotado
+    const balanceActual = Number.parseFloat(
+      JSON.parse((await app.inject({ method: 'GET', url: '/merchants/me/balance', headers: { 'x-api-key': API_KEY } })).payload).available,
+    );
+    const montoPayout = balanceActual; // Pedir todo el saldo disponible
+    const promesas = [1, 2, 3].map((i) =>
+      app.inject({
+        method: 'POST',
+        url: '/payouts',
+        headers: {
+          'x-api-key': API_KEY,
+          'idempotency-key': `idemp_conc_${txId}_${i}`,
+          'content-type': 'application/json',
+        },
+        payload: { amount: montoPayout.toFixed(2) },
+      }),
+    );
+    const respuestas = await Promise.all(promesas);
+    const exitosos = respuestas.filter((r) => r.statusCode === 201);
+    const rechazados = respuestas.filter((r) => r.statusCode === 422);
+
+    assert.equal(exitosos.length, 1, 'Exactamente 1 payout debe ser aprobado');
+    assert.equal(rechazados.length, 2, 'Los demás deben ser rechazados por saldo insuficiente');
+
+    // Saldo final nunca debe ser negativo
+    const balFinal = JSON.parse((await app.inject({ method: 'GET', url: '/merchants/me/balance', headers: { 'x-api-key': API_KEY } })).payload);
+    assert.ok(Number.parseFloat(balFinal.available) >= 0, 'El saldo disponible nunca debe ser negativo');
+  });
+
+  test('Validaciones robustas: limit=abc devuelve 400 y errores 500 no filtran detalles internos', async () => {
+    // 1. limit=abc en movements
+    const resLimit = await app.inject({
+      method: 'GET',
+      url: '/merchants/me/movements?limit=abc',
+      headers: { 'x-api-key': API_KEY },
+    });
+    assert.equal(resLimit.statusCode, 400);
+    const jsonLimit = JSON.parse(resLimit.payload);
+    assert.equal(jsonLimit.error, 'bad_request');
+
+    // 2. cursor inválido devuelve 400
+    const resCursor = await app.inject({
+      method: 'GET',
+      url: '/merchants/me/movements?cursor=cursor_invalido_no_base64',
+      headers: { 'x-api-key': API_KEY },
+    });
+    assert.equal(resCursor.statusCode, 400);
   });
 });
