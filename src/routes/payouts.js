@@ -54,7 +54,8 @@ export async function rutasPayouts(app, { pool }) {
       }
 
       // 3. Lock del comercio para serializar payouts y proteger concurrencia de saldo
-      await client.query('SELECT id FROM merchants WHERE id = $1 FOR UPDATE', [merchantId]);
+      // NO KEY UPDATE: mismo lock que usan las reversas, sin chocar con los KEY SHARE de las FK.
+      await client.query('SELECT id FROM merchants WHERE id = $1 FOR NO KEY UPDATE', [merchantId]);
 
       // 3. Calcular saldo actual del comercio
       const saldoRes = await client.query(

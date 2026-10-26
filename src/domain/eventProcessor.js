@@ -98,8 +98,10 @@ export async function procesarEventoEnTx(client, evento, logger = console, esRei
         [evento.merchant_id, evento.transaction_id, evento.event_id, bruto.toString(), comision.toString(), neto.toString()],
       );
     } else if (decision.efecto === 'debitar') {
-      // Serializar con payouts concurrentes sobre el saldo del comercio
-      await client.query('SELECT id FROM merchants WHERE id = $1 FOR UPDATE', [evento.merchant_id]);
+      // Serializar con payouts y otras reversas sobre el saldo del comercio.
+      // NO KEY UPDATE (y no UPDATE): no choca con el FOR KEY SHARE que toman las FK de los INSERT
+      // sobre transactions/ledger_movements, lo que evita deadlocks entre workers.
+      await client.query('SELECT id FROM merchants WHERE id = $1 FOR NO KEY UPDATE', [evento.merchant_id]);
 
       // Reversa: debita exactamente el monto neto que fue acreditado
       const credRes = await client.query(

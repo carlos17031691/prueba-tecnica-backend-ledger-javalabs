@@ -43,7 +43,8 @@ export async function rutasConsultas(app, { pool }) {
     let cursor = null;
     if (req.query.cursor) {
       cursor = Buffer.from(req.query.cursor, 'base64').toString('utf8');
-      if (!/^\d+$/.test(cursor)) {
+      // El id es BIGSERIAL: un cursor fuera de rango de int8 haría fallar el query en Postgres (500).
+      if (!/^\d+$/.test(cursor) || BigInt(cursor) > 9223372036854775807n) {
         return reply.code(400).send({ error: 'bad_request', message: 'Cursor inválido' });
       }
     }

@@ -703,5 +703,99 @@ describe('Tests de integración contra DB real', () => {
       headers: { 'x-api-key': API_KEY },
     });
     assert.equal(resCursor.statusCode, 400);
+
+    // 3. cursor numérico fuera del rango de int8: antes llegaba a Postgres y devolvía 500
+    const resCursorGrande = await app.inject({
+      method: 'GET',
+      url: `/merchants/me/movements?cursor=${Buffer.from('99999999999999999999999').toString('base64')}`,
+      headers: { 'x-api-key': API_KEY },
+    });
+    assert.equal(resCursorGrande.statusCode, 400);
+  });
+
+  test('Estrés: 120 transacciones mezcladas (desordenadas, con duplicados) y 6 workers en paralelo convergen sin deadlocks', async () => {
+    const mid = `m_stress_${Date.now()}`;
+    await pool.query(
+      `INSERT INTO merchants (id, name, api_key_hash, commission_bps) VALUES ($1, $1, $2, 250)`,
+      [mid, `hash_${mid}`],
+    );
+
+    const fmt = (c) => `${Math.floor(c / 100)}.${String(c % 100).padStart(2, '0')}`;
+    const neto = (c) => c - Math.floor((c * 250) / 10000);
+    let seq = 0;
+    const enviar = (type, tx, cents, evId = `ev_${mid}_${seq++}`) => {
+      const ts = Math.floor(Date.now() / 1000);
+      const body = JSON.stringify({
+        event_id: evId,
+        type,
+        occurred_at: new Date().toISOString(),
+        data: { transaction_id: tx, merchant_id: mid, amount: fmt(cents), currency: 'ARS' },
+      });
+      return app.inject({
+        method: 'POST',
+        url: '/webhooks/psp',
+        headers: { 'content-type': 'application/json', 'x-psp-timestamp': String(ts), 'x-psp-signature': firmar(ts, body) },
+        payload: Buffer.from(body),
+      });
+    };
+
+    const pedidos = [];
+    const esperado = {};
+    let saldoEsperado = 0;
+    for (let i = 0; i < 120; i++) {
+      const tx = `tx_${mid}_${i}`;
+      const c = 1000 + Math.floor(Math.random() * 500000);
+      const k = i % 4;
+      if (k === 0) {
+        esperado[tx] = 'reversed';
+        pedidos.push(['payment.created', tx, c], ['payment.approved', tx, c], ['payment.reversed', tx, c]);
+      } else if (k === 1) {
+        esperado[tx] = 'approved';
+        saldoEsperado += neto(c);
+        pedidos.push(['payment.created', tx, c], ['payment.approved', tx, c]);
+      } else if (k === 2) {
+        esperado[tx] = 'rejected';
+        pedidos.push(['payment.created', tx, c], ['payment.rejected', tx, c]);
+      } else {
+        esperado[tx] = 'reversed';
+        const dup = `dup_${tx}`;
+        pedidos.push(
+          ['payment.created', tx, c],
+          ['payment.approved', tx, c, dup],
+          ['payment.approved', tx, c, dup],
+          ['payment.reversed', tx, c],
+        );
+      }
+    }
+    // Orden aleatorio: created/approved/reversed de una misma tx llegan en cualquier orden.
+    for (let i = pedidos.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pedidos[i], pedidos[j]] = [pedidos[j], pedidos[i]];
+    }
+
+    const respuestas = await Promise.all(pedidos.map((p) => enviar(...p)));
+    assert.ok(respuestas.every((r) => r.statusCode === 200), 'Todos los webhooks firmados responden 200');
+
+    // 6 workers en paralelo drenando la cola, como en producción.
+    await Promise.all(
+      Array.from({ length: 6 }, async () => {
+        while (await tomarYProcesarSiguiente(pool, { workerMaxIntentos: 5 })) { /* drenar */ }
+      }),
+    );
+
+    const evs = (await pool.query(
+      `SELECT status, count(*)::int AS c, max(attempts)::int AS intentos, max(reason) AS motivo
+       FROM inbox_events WHERE merchant_id = $1 GROUP BY status`,
+      [mid],
+    )).rows;
+    assert.deepEqual(evs.map((e) => e.status), ['processed'], `Todos los eventos deben quedar processed: ${JSON.stringify(evs)}`);
+    assert.equal(evs[0].intentos, 0, 'Ningún evento debe haber fallado (p. ej. por deadlock) y reintentado');
+
+    const txs = (await pool.query('SELECT id, status FROM transactions WHERE merchant_id = $1', [mid])).rows;
+    assert.equal(txs.length, 120);
+    for (const t of txs) assert.equal(t.status, esperado[t.id], `Estado final de ${t.id}`);
+
+    const saldo = BigInt((await pool.query('SELECT COALESCE(SUM(amount_cents), 0) AS s FROM ledger_movements WHERE merchant_id = $1', [mid])).rows[0].s);
+    assert.equal(saldo, BigInt(saldoEsperado), 'El saldo debe ser exactamente la suma de los netos de las transacciones approved');
   });
 });
