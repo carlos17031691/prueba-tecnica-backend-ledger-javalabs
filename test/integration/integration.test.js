@@ -72,17 +72,20 @@ describe('Tests de integración contra DB real', () => {
     };
     const rawBody = JSON.stringify(bodyObj);
 
+    const enviar = () =>
+      app.inject({
+        method: 'POST',
+        url: '/webhooks/psp',
+        headers: {
+          'content-type': 'application/json',
+          'x-psp-timestamp': String(ts),
+          'x-psp-signature': firmar(ts, rawBody),
+        },
+        payload: Buffer.from(rawBody),
+      });
+
     // Primer envío -> 200 OK
-    const res1 = await app.inject({
-      method: 'POST',
-      url: '/webhooks/psp',
-      headers: {
-        'content-type': 'application/json',
-        'x-psp-timestamp': String(ts),
-        'x-psp-signature': firmar(ts, rawBody),
-      },
-      payload: Buffer.from(rawBody),
-    });
+    const res1 = await enviar();
 
     assert.equal(res1.statusCode, 200);
     const json1 = JSON.parse(res1.payload);
@@ -90,16 +93,7 @@ describe('Tests de integración contra DB real', () => {
     assert.equal(json1.duplicate, false);
 
     // Segundo envío (duplicado) -> 200 OK con duplicate: true
-    const res2 = await app.inject({
-      method: 'POST',
-      url: '/webhooks/psp',
-      headers: {
-        'content-type': 'application/json',
-        'x-psp-timestamp': String(ts),
-        'x-psp-signature': firmar(ts, rawBody),
-      },
-      payload: Buffer.from(rawBody),
-    });
+    const res2 = await enviar();
 
     assert.equal(res2.statusCode, 200);
     const json2 = JSON.parse(res2.payload);

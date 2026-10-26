@@ -60,25 +60,20 @@ describe('E2E - flujo completo', () => {
     return JSON.parse(res.payload).status;
   }
 
+  // El sufijo del event_id sale del tipo: created -> c, approved -> a, reversed -> r.
+  const evento = (txId, tipo, amount, currency = 'ARS') => ({
+    event_id: `evt_${txId}_${tipo.split('.')[1][0]}`,
+    type: tipo,
+    occurred_at: new Date().toISOString(),
+    data: { transaction_id: txId, merchant_id: MERCHANT_ID, amount, currency },
+  });
+
   test('E2E-001: created + approved acredita neto (2.5%)', async () => {
     const saldoAntes = Number(await saldoDisponible());
 
     const txId = `tx_e2e_${Date.now()}_1`;
-    const evt1 = {
-      event_id: `evt_${txId}_c`,
-      type: 'payment.created',
-      occurred_at: new Date().toISOString(),
-      data: { transaction_id: txId, merchant_id: MERCHANT_ID, amount: '1000.00', currency: 'ARS' },
-    };
-    const evt2 = {
-      event_id: `evt_${txId}_a`,
-      type: 'payment.approved',
-      occurred_at: new Date().toISOString(),
-      data: { transaction_id: txId, merchant_id: MERCHANT_ID, amount: '1000.00', currency: 'ARS' },
-    };
-
-    assert.equal((await enviarWebhook(evt1)).statusCode, 200);
-    assert.equal((await enviarWebhook(evt2)).statusCode, 200);
+    assert.equal((await enviarWebhook(evento(txId, 'payment.created', '1000.00'))).statusCode, 200);
+    assert.equal((await enviarWebhook(evento(txId, 'payment.approved', '1000.00'))).statusCode, 200);
     await drenarCola();
 
     // 1000.00 - 2.5% = 975.00
@@ -89,12 +84,7 @@ describe('E2E - flujo completo', () => {
 
   test('E2E-002: idempotencia de duplicados', async () => {
     const txId = `tx_e2e_${Date.now()}_2`;
-    const evt = {
-      event_id: `evt_${txId}_dup`,
-      type: 'payment.created',
-      occurred_at: new Date().toISOString(),
-      data: { transaction_id: txId, merchant_id: MERCHANT_ID, amount: '500.00', currency: 'ARS' },
-    };
+    const evt = evento(txId, 'payment.created', '500.00');
     const r1 = await enviarWebhook(evt);
     const r2 = await enviarWebhook(evt);
     assert.equal(r1.statusCode, 200);
@@ -105,28 +95,9 @@ describe('E2E - flujo completo', () => {
 
   test('E2E-003: reversed antes de approved -> neto cero', async () => {
     const txId = `tx_e2e_${Date.now()}_3`;
-    const evtC = {
-      event_id: `evt_${txId}_c`,
-      type: 'payment.created',
-      occurred_at: new Date().toISOString(),
-      data: { transaction_id: txId, merchant_id: MERCHANT_ID, amount: '200.00', currency: 'ARS' },
-    };
-    const evtR = {
-      event_id: `evt_${txId}_r`,
-      type: 'payment.reversed',
-      occurred_at: new Date().toISOString(),
-      data: { transaction_id: txId, merchant_id: MERCHANT_ID, amount: '200.00', currency: 'ARS' },
-    };
-    const evtA = {
-      event_id: `evt_${txId}_a`,
-      type: 'payment.approved',
-      occurred_at: new Date().toISOString(),
-      data: { transaction_id: txId, merchant_id: MERCHANT_ID, amount: '200.00', currency: 'ARS' },
-    };
-
-    assert.equal((await enviarWebhook(evtC)).statusCode, 200);
-    assert.equal((await enviarWebhook(evtR)).statusCode, 200);
-    assert.equal((await enviarWebhook(evtA)).statusCode, 200);
+    assert.equal((await enviarWebhook(evento(txId, 'payment.created', '200.00'))).statusCode, 200);
+    assert.equal((await enviarWebhook(evento(txId, 'payment.reversed', '200.00'))).statusCode, 200);
+    assert.equal((await enviarWebhook(evento(txId, 'payment.approved', '200.00'))).statusCode, 200);
     await drenarCola();
 
     assert.equal(await esperar(async () => (await estadoTransaccion(txId)) === 'reversed'), true);
@@ -135,20 +106,8 @@ describe('E2E - flujo completo', () => {
   test('E2E-004: evento USD no genera movimiento', async () => {
     const saldoAntes = await saldoDisponible();
     const txId = `tx_e2e_${Date.now()}_4`;
-    const evtC = {
-      event_id: `evt_${txId}_c`,
-      type: 'payment.created',
-      occurred_at: new Date().toISOString(),
-      data: { transaction_id: txId, merchant_id: MERCHANT_ID, amount: '100.00', currency: 'USD' },
-    };
-    const evtA = {
-      event_id: `evt_${txId}_a`,
-      type: 'payment.approved',
-      occurred_at: new Date().toISOString(),
-      data: { transaction_id: txId, merchant_id: MERCHANT_ID, amount: '100.00', currency: 'USD' },
-    };
-    assert.equal((await enviarWebhook(evtC)).statusCode, 200);
-    assert.equal((await enviarWebhook(evtA)).statusCode, 200);
+    assert.equal((await enviarWebhook(evento(txId, 'payment.created', '100.00', 'USD'))).statusCode, 200);
+    assert.equal((await enviarWebhook(evento(txId, 'payment.approved', '100.00', 'USD'))).statusCode, 200);
     await drenarCola();
 
     assert.equal(await esperar(async () => (await estadoTransaccion(txId)) === 'approved'), true);
