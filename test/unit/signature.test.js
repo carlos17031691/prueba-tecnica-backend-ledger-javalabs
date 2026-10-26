@@ -57,6 +57,15 @@ describe('firmaValida', () => {
       assert.equal(firmaValida({ secretos: [SECRETO], timestamp: ts, header, rawBody: body }), false);
     }
   });
+
+  test('acepta si coincide cualquiera de los secretos en rotación', () => {
+    const header = `v1=${firmar('secreto-viejo', ts, body)}`;
+    assert.equal(firmaValida({ secretos: ['secreto-nuevo', 'secreto-viejo'], timestamp: ts, header, rawBody: body }), true);
+  });
+
+  test('rechaza header sin firmas válidas', () => {
+    assert.equal(firmaValida({ secretos: [SECRETO], timestamp: '123', header: 'invalido', rawBody: Buffer.from('x') }), false);
+  });
 });
 
 describe('parsearHeaderFirma', () => {
@@ -64,6 +73,13 @@ describe('parsearHeaderFirma', () => {
     const a = 'a'.repeat(64);
     const b = 'b'.repeat(64);
     assert.equal(parsearHeaderFirma(`v1=${a},v9=${b},v1=${b}`).length, 2);
+  });
+
+  test('ignora header inválido, vacío o firmas mal formadas', () => {
+    assert.deepEqual(parsearHeaderFirma(''), []);
+    assert.deepEqual(parsearHeaderFirma(null), []);
+    assert.deepEqual(parsearHeaderFirma(undefined), []);
+    assert.deepEqual(parsearHeaderFirma(`v1=abc123, v1=${'d'.repeat(32)}`), []);
   });
 });
 

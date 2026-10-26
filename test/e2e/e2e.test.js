@@ -1,74 +1,35 @@
 import assert from 'node:assert/strict';
-import { createHmac } from 'node:crypto';
 import { after, before, describe, test } from 'node:test';
-import { crearApp } from '../../src/app.js';
-import { crearPool, enTransaccion } from '../../src/db/pool.js';
+import { crearHarness } from '../../test-support/harness.js';
+import { enTransaccion } from '../../src/db/pool.js';
 import { procesarEventoEnTx } from '../../src/domain/eventProcessor.js';
 import { tomarYProcesarSiguiente } from '../../src/worker.js';
-import { cargarEnv } from '../../src/config.js';
 
-cargarEnv();
-
-const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/ledger';
 const WEBHOOK_SECRET = 'secreto-e2e';
 const API_KEY = 'mk_e2e';
 const MERCHANT_ID = 'm_e2e';
 
-function firmar(ts, body) {
-  return `v1=${createHmac('sha256', WEBHOOK_SECRET).update(`${ts}.${body}`).digest('hex')}`;
-}
-
 describe('E2E - flujo completo', () => {
+  let harness;
   let pool;
   let app;
+  let enviarWebhook;
 
   before(async () => {
-    pool = crearPool({ databaseUrl: DATABASE_URL, max: 15, applicationName: 'test-e2e' });
-    app = crearApp({
-      config: {
-        port: 0,
-        host: '127.0.0.1',
-        logLevel: 'silent',
-        databaseUrl: DATABASE_URL,
-        webhookSecret: WEBHOOK_SECRET,
-        webhookToleranciaSeg: 300,
-        adminToken: 'test-admin',
-      },
-      pool,
-      logger: false,
+    harness = await crearHarness({
+      applicationName: 'test-e2e',
+      merchantId: MERCHANT_ID,
+      merchantName: 'E2E',
+      apiKey: API_KEY,
+      webhookSecret: WEBHOOK_SECRET,
+      max: 15,
     });
-    await app.ready();
-
-    const { hashApiKey } = await import('../../src/auth/apiKey.js');
-    await pool.query(
-      `INSERT INTO merchants (id, name, api_key_hash, commission_bps)
-       VALUES ($1, $2, $3, 250)
-       ON CONFLICT (id) DO UPDATE
-         SET api_key_hash = EXCLUDED.api_key_hash`,
-      [MERCHANT_ID, 'E2E', hashApiKey(API_KEY)],
-    );
+    ({ pool, app, enviarWebhook } = harness);
   });
 
   after(async () => {
-    await app.close();
-    await pool.end();
+    await harness.cerrar();
   });
-
-  async function enviarWebhook(evento) {
-    const ts = Math.floor(Date.now() / 1000);
-    const rawBody = JSON.stringify(evento);
-    const res = await app.inject({
-      method: 'POST',
-      url: '/webhooks/psp',
-      headers: {
-        'content-type': 'application/json',
-        'x-psp-timestamp': String(ts),
-        'x-psp-signature': firmar(ts, rawBody),
-      },
-      payload: Buffer.from(rawBody),
-    });
-    return res;
-  }
 
   async function drenarCola(maxIter = 200) {
     for (let i = 0; i < maxIter; i++) {
@@ -77,7 +38,31 @@ describe('E2E - flujo completo', () => {
     }
   }
 
+  // El worker de producción puede estar corriendo en paralelo: se espera a que
+  // el estado converja en vez de asumir que el procesamiento es inmediato.
+  async function esperar(condicion, timeoutMs = 5000) {
+    const limite = Date.now() + timeoutMs;
+    while (Date.now() < limite) {
+      if (await condicion()) return true;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return condicion();
+  }
+
+  async function saldoDisponible() {
+    const res = await app.inject({ method: 'GET', url: '/merchants/me/balance', headers: { 'x-api-key': API_KEY } });
+    return JSON.parse(res.payload).available;
+  }
+
+  async function estadoTransaccion(txId) {
+    const res = await app.inject({ method: 'GET', url: `/transactions/${txId}`, headers: { 'x-api-key': API_KEY } });
+    if (res.statusCode === 404) return 404;
+    return JSON.parse(res.payload).status;
+  }
+
   test('E2E-001: created + approved acredita neto (2.5%)', async () => {
+    const saldoAntes = Number(await saldoDisponible());
+
     const txId = `tx_e2e_${Date.now()}_1`;
     const evt1 = {
       event_id: `evt_${txId}_c`,
@@ -96,10 +81,10 @@ describe('E2E - flujo completo', () => {
     assert.equal((await enviarWebhook(evt2)).statusCode, 200);
     await drenarCola();
 
-    const bal = await app.inject({ method: 'GET', url: '/merchants/me/balance', headers: { 'x-api-key': API_KEY } });
-    const json = JSON.parse(bal.payload);
     // 1000.00 - 2.5% = 975.00
-    assert.equal(json.available, '975.00');
+    const acreditado = await esperar(async () => Number(await saldoDisponible()) - saldoAntes === 975);
+    assert.equal(acreditado, true);
+    assert.equal(Number(await saldoDisponible()) - saldoAntes, 975);
   });
 
   test('E2E-002: idempotencia de duplicados', async () => {
@@ -144,14 +129,11 @@ describe('E2E - flujo completo', () => {
     assert.equal((await enviarWebhook(evtA)).statusCode, 200);
     await drenarCola();
 
-    const txRes = await app.inject({ method: 'GET', url: `/transactions/${txId}`, headers: { 'x-api-key': API_KEY } });
-    assert.equal(txRes.statusCode, 200);
-    const txJson = JSON.parse(txRes.payload);
-    assert.equal(txJson.status, 'reversed');
+    assert.equal(await esperar(async () => (await estadoTransaccion(txId)) === 'reversed'), true);
   });
 
   test('E2E-004: evento USD no genera movimiento', async () => {
-    const balAntes = JSON.parse((await app.inject({ method: 'GET', url: '/merchants/me/balance', headers: { 'x-api-key': API_KEY } })).payload);
+    const saldoAntes = await saldoDisponible();
     const txId = `tx_e2e_${Date.now()}_4`;
     const evtC = {
       event_id: `evt_${txId}_c`,
@@ -169,8 +151,8 @@ describe('E2E - flujo completo', () => {
     assert.equal((await enviarWebhook(evtA)).statusCode, 200);
     await drenarCola();
 
-    const balDespues = JSON.parse((await app.inject({ method: 'GET', url: '/merchants/me/balance', headers: { 'x-api-key': API_KEY } })).payload);
-    assert.equal(balDespues.available, balAntes.available);
+    assert.equal(await esperar(async () => (await estadoTransaccion(txId)) === 'approved'), true);
+    assert.equal(await saldoDisponible(), saldoAntes);
   });
 
   test('E2E-005: payout exitoso', async () => {
@@ -178,11 +160,13 @@ describe('E2E - flujo completo', () => {
     const evCId = `evt_${txId}_c`;
     const evAId = `evt_${txId}_a`;
 
+    // next_attempt_at en el futuro: el worker de fondo no compite por estos eventos,
+    // la prueba los procesa explícitamente en su propia transacción.
     await pool.query(
       `INSERT INTO inbox_events
-         (event_id, type, transaction_id, merchant_id, amount_cents, currency, occurred_at, payload, payload_hash)
-       VALUES ($1, 'payment.created', $2, $3, '50000', 'ARS', clock_timestamp(), '{}', 'h1'),
-              ($4, 'payment.approved', $2, $3, '50000', 'ARS', clock_timestamp(), '{}', 'h2')`,
+         (event_id, type, transaction_id, merchant_id, amount_cents, currency, occurred_at, payload, payload_hash, next_attempt_at)
+       VALUES ($1, 'payment.created', $2, $3, '50000', 'ARS', clock_timestamp(), '{}', 'h1', clock_timestamp() + interval '1 hour'),
+              ($4, 'payment.approved', $2, $3, '50000', 'ARS', clock_timestamp(), '{}', 'h2', clock_timestamp() + interval '1 hour')`,
       [evCId, txId, MERCHANT_ID, evAId],
     );
 

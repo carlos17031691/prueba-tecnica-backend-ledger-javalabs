@@ -1,55 +1,29 @@
 import assert from 'node:assert/strict';
-import { createHmac } from 'node:crypto';
 import { after, before, describe, test } from 'node:test';
-import { crearApp } from '../../src/app.js';
-import { crearPool } from '../../src/db/pool.js';
-import { cargarEnv } from '../../src/config.js';
+import { crearHarness, firmar } from '../../test-support/harness.js';
 
-cargarEnv();
-
-const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/ledger';
 const WEBHOOK_SECRET = 'secreto-regression';
 const API_KEY = 'mk_regression';
 const MERCHANT_ID = 'm_regression';
 
-function firmar(ts, body) {
-  return `v1=${createHmac('sha256', WEBHOOK_SECRET).update(`${ts}.${body}`).digest('hex')}`;
-}
-
 describe('Regresión - casos críticos', () => {
-  let pool;
+  let harness;
   let app;
 
   before(async () => {
-    pool = crearPool({ databaseUrl: DATABASE_URL, max: 10, applicationName: 'test-regression' });
-    app = crearApp({
-      config: {
-        port: 0,
-        host: '127.0.0.1',
-        logLevel: 'silent',
-        databaseUrl: DATABASE_URL,
-        webhookSecret: WEBHOOK_SECRET,
-        webhookToleranciaSeg: 300,
-        adminToken: 'test-admin',
-      },
-      pool,
-      logger: false,
+    harness = await crearHarness({
+      applicationName: 'test-regression',
+      merchantId: MERCHANT_ID,
+      merchantName: 'Regresion',
+      apiKey: API_KEY,
+      webhookSecret: WEBHOOK_SECRET,
+      max: 10,
     });
-    await app.ready();
-
-    const { hashApiKey } = await import('../../src/auth/apiKey.js');
-    await pool.query(
-      `INSERT INTO merchants (id, name, api_key_hash, commission_bps)
-       VALUES ($1, $2, $3, 250)
-       ON CONFLICT (id) DO UPDATE
-         SET api_key_hash = EXCLUDED.api_key_hash`,
-      [MERCHANT_ID, 'Regresion', hashApiKey(API_KEY)],
-    );
+    app = harness.app;
   });
 
   after(async () => {
-    await app.close();
-    await pool.end();
+    await harness.cerrar();
   });
 
   test('REG-001: webhook con firma inválida -> 401', async () => {
@@ -70,7 +44,7 @@ describe('Regresión - casos críticos', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/webhooks/psp',
-      headers: { 'x-psp-timestamp': String(ts), 'x-psp-signature': firmar(ts, body) },
+      headers: { 'x-psp-timestamp': String(ts), 'x-psp-signature': firmar(WEBHOOK_SECRET, ts, body) },
       payload: Buffer.from(body),
     });
     assert.equal(res.statusCode, 401);

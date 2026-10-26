@@ -7,6 +7,8 @@ describe('parsearMonto', () => {
     assert.equal(parsearMonto('15000.00'), 1500000n);
     assert.equal(parsearMonto('999.99'), 99999n);
     assert.equal(parsearMonto('0.01'), 1n);
+    assert.equal(parsearMonto('0.00'), 0n);
+    assert.equal(parsearMonto('1.00'), 100n);
   });
 
   test('no pierde precisión con montos grandes', () => {
@@ -26,6 +28,8 @@ describe('formatearMonto', () => {
     assert.equal(formatearMonto(97500n), '975.00');
     assert.equal(formatearMonto(5n), '0.05');
     assert.equal(formatearMonto(0n), '0.00');
+    assert.equal(formatearMonto(0), '0.00');
+    assert.equal(formatearMonto(123456789012n), '1234567890.12');
   });
 
   test('montos negativos', () => {
