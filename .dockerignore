@@ -1,3 +1,11 @@
 node_modules
 .git
 test
+*.log
+.env
+.env.*
+coverage
+.nyc_output
+scripts/*stress*.mjs
+scripts/*7000*.mjs
+scripts/auditoria*.mjs

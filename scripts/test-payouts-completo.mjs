@@ -10,12 +10,12 @@ const sign = (ts, body) => `v1=${createHmac('sha256', SECRET).update(ts + '.' + 
 
 const j = async (res) => { try { return await res.json(); } catch { return await res.text(); } };
 
-(async () => {
+void (async () => {
   console.log('=== PAYOUT TEST B1 ===');
   
   // saldo inicial
   console.log('\n1) GET /merchants/me/balance');
-  console.log(await j(await fetch(BASE + '/merchants/me/balance', { headers: hdr() })));
+  console.log(JSON.stringify(await j(await fetch(BASE + '/merchants/me/balance', { headers: hdr() }))));
   
   // acreditar
   const tx = 'txp_' + Date.now();
@@ -24,12 +24,12 @@ const j = async (res) => { try { return await res.json(); } catch { return await
     const ev = { event_id: 'ev_'+tx+'_'+t[0], type: 'payment.'+t, occurred_at: new Date().toISOString(), data: { transaction_id: tx, merchant_id: 'm_001', amount: '1000.00', currency: 'ARS' } };
     const body = JSON.stringify(ev);
     const r = await fetch(BASE + '/webhooks/psp', { method:'POST', headers:{'content-type':'application/json','x-psp-timestamp':ts(),'x-psp-signature':sign(ts(),body)}, body });
-    console.log('webhook '+t+':', r.status);
+    console.log('webhook ' + String(t) + ':', r.status);
   }
   await new Promise(r=>setTimeout(r,3000));
   
   console.log('\n2) saldo tras acreditación');
-  console.log(await j(await fetch(BASE + '/merchants/me/balance', { headers: hdr() })));
+  console.log(JSON.stringify(await j(await fetch(BASE + '/merchants/me/balance', { headers: hdr() }))));
   
   const key = 'pk_' + randomUUID();
   
@@ -44,7 +44,7 @@ const j = async (res) => { try { return await res.json(); } catch { return await
   
   console.log('\n6) payout 50.00 -> 201');
   let res = await fetch(BASE+'/payouts',{method:'POST',headers:{...hdr(),'idempotency-key':key},body:JSON.stringify({amount:'50.00'})});
-  console.log(res.status, await res.text());
+  console.log(res.status, JSON.stringify(await res.text()));
   
   console.log('\n7) replay mismo body -> 200');
   res = await fetch(BASE+'/payouts',{method:'POST',headers:{...hdr(),'idempotency-key':key},body:JSON.stringify({amount:'50.00'})});
@@ -55,7 +55,7 @@ const j = async (res) => { try { return await res.json(); } catch { return await
   console.log(res.status);
   
   console.log('\n9) saldo final');
-  console.log(await j(await fetch(BASE + '/merchants/me/balance', { headers: hdr() })));
+  console.log(JSON.stringify(await j(await fetch(BASE + '/merchants/me/balance', { headers: hdr() }))));
   
   console.log('\n=== OK ===');
-})();
+})().catch((e) => { console.error(String(e)); process.exit(1); });

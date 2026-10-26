@@ -51,7 +51,7 @@ async function enviar(descripcion, body, esperado, { ts = ahora(), firmarCon = b
 }
 
 async function main() {
-  console.log(`Enviando secuencia a ${BASE_URL}\n`);
+  console.log(`Enviando secuencia a ${String(BASE_URL)}\n`);
 
   // 1
   await enviar('1. created tx_9f3a21 (15.000,00)', leer('01-created-tx_9f3a21.json'), 200);
@@ -98,7 +98,7 @@ async function main() {
   } catch {}
   const saldoOk = saldo.status === 200 && String(disponible) === '15600.00';
   if (!saldoOk) fallas++;
-  console.log(`${saldoOk ? 'OK  ' : 'FALLA'} ${'saldo de m_001 = 15.600,00'.padEnd(58)} recibido ${saldo.status} ${cuerpo}`);
+  console.log(`${saldoOk ? 'OK  ' : 'FALLA'} ${'saldo de m_001 = 15.600,00'.padEnd(58)} recibido ${saldo.status} ${String(cuerpo)}`);
 
   const vencida = await fetch(`${BASE_URL}/transactions/tx_e19b33`, { headers: { 'x-api-key': API_KEY } });
   const vencidaOk = vencida.status === 404;
@@ -106,7 +106,7 @@ async function main() {
   console.log(`${vencidaOk ? 'OK  ' : 'FALLA'} ${'tx_e19b33 no existe (paso 7 rechazado)'.padEnd(58)} esperado 404, recibido ${vencida.status}`);
 
   const revertida = await fetch(`${BASE_URL}/transactions/tx_b71c04`, { headers: { 'x-api-key': API_KEY } });
-  console.log(`INFO ${'estado de tx_b71c04 (esperado: reversed)'.padEnd(58)} ${await revertida.text()}`);
+  console.log(`INFO ${'estado de tx_b71c04 (esperado: reversed)'.padEnd(58)} ${String(await revertida.text())}`);
 
   console.log(fallas === 0 ? '\nSecuencia completa sin fallas.' : `\n${fallas} falla(s).`);
   process.exit(fallas === 0 ? 0 : 1);

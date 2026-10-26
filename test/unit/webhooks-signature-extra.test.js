@@ -4,7 +4,9 @@ import { calcularFirma, parsearHeaderFirma, firmaValida, timestampValido } from 
 
 describe('parsearHeaderFirma', () => {
   test('parsea firma v1 simple', () => {
-    const firmas = parsearHeaderFirma('v1=abcdef1234567890'.repeat(4).slice(0, 66)); // not quite
+    const firmas = parsearHeaderFirma('v1=' + 'a'.repeat(64));
+    assert.equal(firmas.length, 1);
+    assert.equal(firmas[0].version, 'v1');
   });
 
   test('parsea múltiples firmas separadas por coma', () => {

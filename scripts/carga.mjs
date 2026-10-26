@@ -100,7 +100,7 @@ for (let i = 0; i < 200; i++) {
 
 // Orden aleatorio: created, approved y reversed de una misma transacción llegan en cualquier orden.
 for (let i = requests.length - 1; i > 0; i--) {
-  const j = Math.floor(Math.random() * (i + 1));
+  const j = randomBytes(4).readUInt32BE(0) % (i + 1);
   [requests[i], requests[j]] = [requests[j], requests[i]];
 }
 
@@ -139,7 +139,14 @@ async function estado(tx) {
 }
 
 const percentil = (ordenados, p) => ordenados[Math.min(ordenados.length - 1, Math.floor((p / 100) * ordenados.length))];
-const muestra = (lista, k) => lista.slice().sort(() => Math.random() - 0.5).slice(0, k);
+const muestra = (lista, k) => {
+  const copia = lista.slice();
+  for (let i = copia.length - 1; i > 0; i--) {
+    const j = randomBytes(4).readUInt32BE(0) % (i + 1);
+    [copia[i], copia[j]] = [copia[j], copia[i]];
+  }
+  return copia.slice(0, k);
+};
 
 async function main() {
   console.log(`Corrida ${CORRIDA}: ${requests.length} requests a ${BASE_URL}, concurrencia ${CONCURRENCIA}\n`);
