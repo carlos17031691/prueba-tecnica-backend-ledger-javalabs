@@ -21,8 +21,9 @@ ALTER TABLE ledger_movements ADD CONSTRAINT ledger_movements_kind_check
 -- Agregar columna payout_id a ledger_movements y referenciarlo
 ALTER TABLE ledger_movements ADD COLUMN IF NOT EXISTS payout_id TEXT REFERENCES payouts (id);
 
--- Ajustar que event_id sea nullable si es un payout
+-- Ajustar que event_id y transaction_id sean nullable si es un payout
 ALTER TABLE ledger_movements ALTER COLUMN event_id DROP NOT NULL;
+ALTER TABLE ledger_movements ALTER COLUMN transaction_id DROP NOT NULL;
 
 -- Ajustar constraint de signos para incluir payout
 ALTER TABLE ledger_movements DROP CONSTRAINT IF EXISTS ledger_movements_signo_chk;

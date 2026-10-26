@@ -32,7 +32,10 @@ export async function rutasPayouts(app, { pool }) {
 
     // Procesamiento atómico en DB
     const resultado = await enTransaccion(pool, async (client) => {
-      // 1. Verificar idempotencia previa
+      // 1. Lock transaccional sobre la clave de idempotencia para serializar llamadas concurrentes idénticas
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`payout_${merchantId}_${idempotencyKey}`]);
+
+      // 2. Verificar idempotencia previa
       const payoutPrevio = await client.query(
         `SELECT id, request_hash, response_body
          FROM payouts
@@ -50,7 +53,7 @@ export async function rutasPayouts(app, { pool }) {
         return { status: 200, body: existente.response_body };
       }
 
-      // 2. Lock del comercio para serializar payouts y proteger concurrencia
+      // 3. Lock del comercio para serializar payouts y proteger concurrencia de saldo
       await client.query('SELECT id FROM merchants WHERE id = $1 FOR UPDATE', [merchantId]);
 
       // 3. Calcular saldo actual del comercio
