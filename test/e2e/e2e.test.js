@@ -142,4 +142,83 @@ describe('E2E - flujo completo', () => {
     });
     assert.equal(res.statusCode, 201);
   });
+
+  test('E2E-006: 10 webhooks HTTP en paralelo del mismo evento acreditan una sola vez', async () => {
+    const saldoAntes = Number(await saldoDisponible());
+    const txId = `tx_e2e_${Date.now()}_6`;
+
+    assert.equal((await enviarWebhook(evento(txId, 'payment.created', '1000.00'))).statusCode, 200);
+
+    // 10 requests firmadas en paralelo, todas con el mismo event_id de aprobación.
+    const aprobado = evento(txId, 'payment.approved', '1000.00');
+    const respuestas = await Promise.all(Array.from({ length: 10 }, () => enviarWebhook(aprobado)));
+
+    assert.ok(respuestas.every((r) => r.statusCode === 200), 'Las 10 respuestas deben ser 200');
+    const noDuplicados = respuestas.filter((r) => JSON.parse(r.payload).duplicate === false);
+    assert.equal(noDuplicados.length, 1, 'Solo una inserción debe ser original; las otras 9 son duplicadas');
+
+    await drenarCola();
+
+    // 1000.00 - 2.5% = 975.00, exactamente una vez.
+    assert.equal(await esperar(async () => Number(await saldoDisponible()) - saldoAntes === 975), true);
+    assert.equal(Number(await saldoDisponible()) - saldoAntes, 975);
+
+    const movimientos = await pool.query(
+      `SELECT COUNT(*)::int AS total, COALESCE(SUM(amount_cents), 0) AS suma
+       FROM ledger_movements
+       WHERE transaction_id = $1 AND kind = 'payment_credit'`,
+      [txId],
+    );
+    assert.equal(movimientos.rows[0].total, 1, 'Debe existir un único crédito');
+    assert.equal(movimientos.rows[0].suma.toString(), '97500');
+  });
+
+  test('E2E-007: admin reprocess de un evento failed no duplica la acreditación', async () => {
+    const saldoAntes = Number(await saldoDisponible());
+    const txId = `tx_e2e_${Date.now()}_7`;
+
+    assert.equal((await enviarWebhook(evento(txId, 'payment.created', '1000.00'))).statusCode, 200);
+    await drenarCola();
+    assert.equal(await esperar(async () => (await estadoTransaccion(txId)) === 'pending'), true);
+
+    // Evento aprobado en la dead-letter queue (failed), tal como quedaría tras agotar reintentos.
+    const evAId = `evt_${txId}_a`;
+    await pool.query(
+      `INSERT INTO inbox_events
+         (event_id, type, transaction_id, merchant_id, amount_cents, currency, occurred_at,
+          payload, payload_hash, status, reason, attempts, next_attempt_at)
+       VALUES ($1, 'payment.approved', $2, $3, '100000', 'ARS', clock_timestamp(),
+               '{}', 'hash_e2e_admin', 'failed', 'simulated_transient_error', 5, clock_timestamp() + interval '1 hour')`,
+      [evAId, txId, MERCHANT_ID],
+    );
+
+    const reprocess = (id, token) =>
+      app.inject({
+        method: 'POST',
+        url: `/admin/events/${id}/reprocess`,
+        headers: token ? { 'x-admin-token': token } : {},
+      });
+
+    assert.equal((await reprocess(evAId)).statusCode, 401, 'Sin token debe responder 401');
+    assert.equal((await reprocess('evt_inexistente', 'test-admin')).statusCode, 404);
+    assert.equal((await reprocess(evAId, 'token-invalido')).statusCode, 401);
+
+    const res = await reprocess(evAId, 'test-admin');
+    assert.equal(res.statusCode, 200);
+    assert.equal(JSON.parse(res.payload).reprocessed, true);
+
+    assert.equal(await esperar(async () => Number(await saldoDisponible()) - saldoAntes === 975), true);
+    assert.equal(Number(await saldoDisponible()) - saldoAntes, 975);
+
+    const movimientos = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM ledger_movements
+       WHERE transaction_id = $1 AND kind = 'payment_credit'`,
+      [txId],
+    );
+    assert.equal(movimientos.rows[0].total, 1, 'El reproceso no debe duplicar el crédito');
+
+    // Un segundo reproceso del mismo evento ya no aplica: responde 400 y el saldo no cambia.
+    assert.equal((await reprocess(evAId, 'test-admin')).statusCode, 400);
+    assert.equal(Number(await saldoDisponible()) - saldoAntes, 975);
+  });
 });

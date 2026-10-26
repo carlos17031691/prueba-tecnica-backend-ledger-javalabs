@@ -16,7 +16,7 @@ Marcá con `[x]` lo que completaste. Si algo quedó a medias, dejalo sin marcar 
 - [X] Soporte del prefijo `v1=` y de dos firmas durante una rotación
 - [X] Comparación de firma en tiempo constante
 - [X] Rechazo por timestamp fuera de la ventana de 5 minutos
-- [X] Respuesta en menos de 500 ms
+- [X] Respuesta en menos de 500 ms con carga normal (p95 ~9 ms sin carga). Bajo 7000 requests simultáneos el p50 fue ~2,7 s: el cuello es la persistencia síncrona en `inbox_events`, no la validación (ver nota en `SOLUCION.md`).
 
 ### Idempotencia
 - [X] Un mismo `event_id` produce un solo efecto
@@ -53,7 +53,9 @@ Marcá con `[x]` lo que completaste. Si algo quedó a medias, dejalo sin marcar 
 - [X] Unitarios de la máquina de estados
 - [X] Unitarios del cálculo de comisión (incluido el caso 999,99)
 - [X] Integración contra la base de datos real
-- [X] Test de concurrencia con requests en paralelo
+- [X] Test de concurrencia por HTTP: 10 webhooks firmados en paralelo del mismo evento, drenaje del worker y saldo final exacto (`test/e2e/e2e.test.js`, E2E-006)
+- [X] Test del worker: error inesperado incrementa `attempts`, aplica backoff y llega a `failed` (SAVEPOINT)
+- [X] Test de `POST /admin/events/:id/reprocess` sobre un evento `failed` sin doble acreditación (E2E-007)
 - [X] `scripts/enviar-secuencia.mjs` termina con saldo 15.600,00
 
 ### Carga asíncrona y concurrente (7000 webhooks simultáneos)
@@ -62,7 +64,7 @@ Marcá con `[x]` lo que completaste. Si algo quedó a medias, dejalo sin marcar 
 - [X] Saldo exacto después de procesar todo
 - [X] Eventos de una misma transacción en cualquier orden resueltos bien
 - [X] Pool de conexiones a la DB dimensionado y justificado
-- [X] Salida de una corrida incluida en `SOLUCION.md`
+- [ ] Salida de una corrida incluida en `SOLUCION.md` (hay resumen de métricas, no la salida completa)
 - [X] Diagrama de arquitectura en `PREGUNTAS.md` (A1)
 
 ## Parte B — Extensiones (al menos 2)
@@ -86,19 +88,19 @@ Marcá con `[x]` lo que completaste. Si algo quedó a medias, dejalo sin marcar 
 - [ ] Reporte de montos distintos
 
 ### B4. Observabilidad y operación
-- [X] Logs estructurados con `correlation_id`
+- [X] Logs estructurados con `correlation_id`: la API usa el logger de Fastify y el worker emite JSON con `correlation_id`, `event_id`, `worker_id`, `attempts` y `reason` (`src/worker.js`)
 - [X] `GET /health` que verifica la DB
 - [X] Métricas de eventos procesados, duplicados y fallidos
-- [X] Reproceso de un evento fallido sin doble acreditación
+- [X] Reproceso de un evento fallido sin doble acreditación (test E2E-007)
 
 ### B5. Rate limiting y hardening
 - [ ] Rate limit por API key
-- [ ] API keys almacenadas hasheadas
+- [X] API keys almacenadas hasheadas (SHA-256)
 - [ ] Rotación del secreto del webhook sin downtime
 
 ## Documentación (sin IA)
-- [ ] `SOLUCION.md`: cómo levantar, cómo testear, organización del código
-- [ ] `PREGUNTAS.md` respondido completo
-- [ ] `BITACORA.md` con bloques de una hora y tiempo total
-- [ ] Declaración de uso de IA en `BITACORA.md`
-- [ ] Historial de commits chicos e incrementales
+- [X] `SOLUCION.md`: cómo levantar, cómo testear, organización del código (nota: falta pegar la salida de `carga.mjs`)
+- [X] `PREGUNTAS.md` respondido completo: restaurada la versión A1–A10 + C1–C10 y completada la segunda mitad de C10
+- [X] `BITACORA.md` con bloques de una hora y tiempo total (nota: los bloques 1–4 se escribieron al final, no a medida que avanzaba)
+- [X] Declaración de uso de IA en `BITACORA.md` y `DECLARACION_DE_TRANSPARENCIA_IA.md`
+- [ ] Historial de commits chicos e incrementales: el historial original fue reescrito (18 commits con la misma committer date); no se puede corregir retroactivamente

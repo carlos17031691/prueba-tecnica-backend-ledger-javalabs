@@ -21,8 +21,5 @@
     "fastify": "^4.28.1",
     "pg": "^8.13.1",
     "pino": "^9.5.0"
-  },
-  "devDependencies": {
-    "@testcontainers/postgresql": "^10.13.2"
   }
 }

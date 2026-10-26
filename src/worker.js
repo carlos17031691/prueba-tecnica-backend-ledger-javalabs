@@ -12,11 +12,19 @@ const pool = crearPool({
 
 let corriendo = true;
 
+// Logs estructurados en JSON: cada línea incluye correlation_id para poder seguir
+// un evento desde el webhook (API) hasta el worker.
+function emitirLog(nivel, campos, mensaje) {
+  process.stdout.write(
+    `${JSON.stringify({ ts: new Date().toISOString(), level: nivel, component: 'worker', msg: mensaje, ...campos })}\n`,
+  );
+}
+
 export async function tomarYProcesarSiguiente(p = pool, cfg = config) {
   return enTransaccion(p, async (client) => {
     // Tomar 1 evento pendiente usando SKIP LOCKED para evitar colisiones entre workers
     const res = await client.query(`
-      SELECT event_id, type, transaction_id, merchant_id, amount_cents, currency, attempts
+      SELECT event_id, type, transaction_id, merchant_id, amount_cents, currency, attempts, correlation_id
       FROM inbox_events
       WHERE status = 'received' AND next_attempt_at <= clock_timestamp()
       ORDER BY next_attempt_at ASC, received_at ASC
@@ -27,13 +35,21 @@ export async function tomarYProcesarSiguiente(p = pool, cfg = config) {
     if (res.rows.length === 0) return false;
 
     const evento = res.rows[0];
+    const contexto = {
+      worker_id: cfg.workerId ?? null,
+      event_id: evento.event_id,
+      correlation_id: evento.correlation_id ?? null,
+      transaction_id: evento.transaction_id,
+      type: evento.type,
+    };
 
     try {
       // SAVEPOINT para aislar fallos de procesamiento y evitar abortar la transacción externa
       await client.query('SAVEPOINT evento_sp');
       try {
-        await procesarEventoEnTx(client, evento);
+        const resultado = await procesarEventoEnTx(client, evento);
         await client.query('RELEASE SAVEPOINT evento_sp');
+        emitirLog('info', { ...contexto, status: resultado.estadoFinal, motivo: resultado.motivo ?? null }, 'evento_procesado');
         return true;
       } catch (err) {
         await client.query('ROLLBACK TO SAVEPOINT evento_sp');
@@ -58,35 +74,42 @@ export async function tomarYProcesarSiguiente(p = pool, cfg = config) {
          WHERE event_id = $5`,
         [estado, intentos, razon, delaySeg, evento.event_id],
       );
+
+      emitirLog(
+        'error',
+        { ...contexto, status: estado, attempts: intentos, max_attempts: maxIntentos, next_attempt_in_seconds: delaySeg, reason: razon },
+        'evento_fallido',
+      );
       return true;
     }
   });
 }
 
 async function loopWorker(id) {
+  const cfg = { ...config, workerId: id };
   while (corriendo) {
     try {
-      const huboTrabajo = await tomarYProcesarSiguiente();
+      const huboTrabajo = await tomarYProcesarSiguiente(pool, cfg);
       if (!huboTrabajo) {
         // Pausa breve si no hay eventos
         await new Promise((r) => setTimeout(r, 20));
       }
     } catch (err) {
-      console.error(`[Worker ${id}] Error:`, err.message);
+      emitirLog('error', { worker_id: id, reason: String(err?.message ?? err) }, 'error_de_loop');
       await new Promise((r) => setTimeout(r, 500));
     }
   }
 }
 
 async function apagar() {
-  console.log('Apagando workers...');
+  emitirLog('info', {}, 'worker_apagando');
   corriendo = false;
   await pool.end();
   process.exit(0);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  console.log(`Iniciando worker con concurrencia ${config.workerConcurrencia}...`);
+  emitirLog('info', { concurrency: config.workerConcurrencia }, 'worker_iniciado');
   for (let i = 0; i < config.workerConcurrencia; i++) {
     void loopWorker(i);
   }

@@ -31,3 +31,14 @@
    • Test 7000 según especificación: 6500x200 + 500x401
    • Todas las permutaciones out-of-order: OK
    • Idempotencia con 50 duplicados paralelos: OK
+   • Latencia: sin carga p95 ~9 ms; con 7000 simultáneos el p50 medido estuvo entre 2,8 s y ~12 s según la corrida. No se cumple "< 500 ms" bajo esa carga: el cuello es el INSERT síncrono en `inbox_events`, no la validación de firma.
+
+6. Suite de tests (88 tests):
+   • `npm test` usa la DB indicada por `DATABASE_URL`; la suite no es autocontenida (no se usa testcontainers).
+   • e2e incluye concurrencia por HTTP (10 webhooks firmados en paralelo del mismo evento + saldo exacto) y reproceso admin de un evento `failed` sin doble acreditación.
+   • El worker emite logs JSON con `correlation_id`, `event_id`, `worker_id`, `attempts` y `reason`.
+
+7. Doble check contra la evaluación (26/10/2026):
+   • Corregidos: worker bloqueado por evento venenoso, B1 payout 500, transacción pending eterna, eventos aplicados marcados `invalid`, 500 con detalles internos y carrera de `Idempotency-Key`.
+   • Verificados con tests: payouts 201/200/409/422 y concurrencia, reintentos con SAVEPOINT hasta `failed`, reproceso admin, 6 permutaciones out-of-order, 10 webhooks HTTP en paralelo.
+   • Abiertos y declarados sin marcar como cumplidos: latencia < 500 ms bajo 7000 simultáneos, snapshots de saldo, rate limiting, rotación de secreto sin downtime, historial de commits y `PREGUNTAS.md` completo.

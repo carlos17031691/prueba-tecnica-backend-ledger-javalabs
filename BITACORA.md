@@ -39,11 +39,18 @@ Completala **sin IA** a medida que trabajás, no al final. Un bloque por cada ho
 
 • Tiempo total: 4h 10m.
 
+### Bloque 5 - Doble check contra la evaluación y cierre de brechas
+| Fecha | Duración | Actividad |
+| :-- | :-- | :-- |
+| 26/10/2026 | 1h 00m | Lectura completa de la evaluación (`evaluacion-carlos-torres.pdf`) y contraste hallazgo por hallazgo contra el código actual. Verificación de lo ya corregido (worker venenoso, B1, diferidos, invalid, errores 500, carrera de idempotencia) y de lo que seguía abierto. Añadidos tests HTTP reales: 10 webhooks firmados en paralelo del mismo evento con verificación del saldo exacto (E2E-006) y reproceso admin de un evento `failed` sin doble acreditación (E2E-007). Logs del worker convertidos a JSON estructurado con `correlation_id`, `event_id`, `worker_id`, `attempts` y `reason`. Ajuste honesto de `CHECKLIST.md`: "< 500 ms" con nota de latencia bajo carga, concurrencia por HTTP, reproceso probado y B5 API keys hasheadas. Restauración de `PREGUNTAS.md` a la versión completa A1–A10 + C1–C10 y finalización de C10 (qué no convence y qué haría con más tiempo). Actualización de `SOLUCION.md` y `AUDITORIA.md` con brechas abiertas y evidencia. `npm test`: 88/88. |
+
+• Tiempo total: 1h 00m.
+
 ## Declaración de uso de IA
 
 Completarla es obligatorio.
 
-• Herramientas usadas: Asistente AI (Antigravity).
-• En qué archivos o tareas: Generación de código JavaScript (src/), esquemas SQL (migrations/), configuración de Docker (Dockerfile, docker-compose.yml) y tests (test/). Además auditoría, correcciones de robustez, scripts de stress y documentación.
-• Qué generó la IA que tuviste que corregir: La sugerencia inicial intentó usar Java por el nombre del repo ("javalabs"), lo cual corregí para usar JavaScript como permite el README. También se corrigió la regla de exclusión de archivos .sql y la calibración del sondeo en el worker.
+• Herramientas usadas: Asistente AI (Antigravity y, en el doble check del 26/10, un agente de código).
+• En qué archivos o tareas: Generación de código JavaScript (src/), esquemas SQL (migrations/), configuración de Docker (Dockerfile, docker-compose.yml) y tests (test/). Además auditoría, correcciones de robustez, scripts de stress y documentación. En el doble check final: tests E2E-006/E2E-007, logs estructurados del worker y ajustes de documentación.
+• Qué generó la IA que tuviste que corregir: La sugerencia inicial intentó usar Java por el nombre del repo ("javalabs"), lo cual corregí para usar JavaScript como permite el README. También se corrigió la regla de exclusión de archivos .sql y la calibración del sondeo en el worker. En la evaluación se detectaron bugs que el código generado no ejecutaba; el doble check del 26/10 verificó cada uno contra el repositorio antes de marcarlo.
 • Transparencia detallada: Ver [`DECLARACION_DE_TRANSPARENCIA_IA.md`](DECLARACION_DE_TRANSPARENCIA_IA.md) para el desglose honesto por actividad, nivel de uso y alcance.
