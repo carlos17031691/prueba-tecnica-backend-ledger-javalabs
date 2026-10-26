@@ -7,7 +7,8 @@ COPY package*.json ./
 RUN npm ci --omit=dev --ignore-scripts && \
     chown -R node:node /app
 
-COPY --chown=node:node . .
+COPY --chown=node:node src ./src
+COPY --chown=node:node migrations ./migrations
 
 USER node
 

@@ -88,7 +88,7 @@ async function apagar() {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   console.log(`Iniciando worker con concurrencia ${config.workerConcurrencia}...`);
   for (let i = 0; i < config.workerConcurrencia; i++) {
-    loopWorker(i);
+    void loopWorker(i);
   }
   process.on('SIGTERM', () => { void apagar(); });
   process.on('SIGINT', () => { void apagar(); });
