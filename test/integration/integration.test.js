@@ -350,66 +350,65 @@ describe('Tests de integración contra DB real', () => {
     );
   });
 
-  test('Fuera de orden: reversed -> approved -> created termina en reversed con efecto neto 0', async () => {
-    const txId = `tx_fdo_${Date.now()}`;
+  test('Fuera de orden: las 6 permutaciones de created/approved/reversed convergen en reversed con saldo 0', async () => {
+    const permutaciones = [
+      ['payment.created', 'payment.approved', 'payment.reversed'],
+      ['payment.created', 'payment.reversed', 'payment.approved'],
+      ['payment.approved', 'payment.created', 'payment.reversed'],
+      ['payment.approved', 'payment.reversed', 'payment.created'],
+      ['payment.reversed', 'payment.created', 'payment.approved'],
+      ['payment.reversed', 'payment.approved', 'payment.created'],
+    ];
+
     const amountCents = 150000n; // 1.500,00 ARS
 
-    const insertarYProcesar = async (tipo, evId) => {
-      return enTransaccion(pool, async (client) => {
-        await client.query(
-          `INSERT INTO inbox_events
-             (event_id, type, transaction_id, merchant_id, amount_cents, currency, occurred_at, payload, payload_hash)
-           VALUES ($1, $2, $3, $4, $5, 'ARS', clock_timestamp(), '{}', 'hash_fdo')`,
-          [evId, tipo, txId, MERCHANT_ID, amountCents.toString()],
-        );
-        return procesarEventoEnTx(client, {
-          event_id: evId,
-          type: tipo,
-          transaction_id: txId,
-          merchant_id: MERCHANT_ID,
-          amount_cents: amountCents,
-          currency: 'ARS',
+    for (let i = 0; i < permutaciones.length; i++) {
+      const perm = permutaciones[i];
+      const txId = `tx_perm_${Date.now()}_${i}`;
+
+      for (let j = 0; j < perm.length; j++) {
+        const tipo = perm[j];
+        const evId = `evt_p_${txId}_${j}`;
+
+        await enTransaccion(pool, async (client) => {
+          await client.query(
+            `INSERT INTO inbox_events
+               (event_id, type, transaction_id, merchant_id, amount_cents, currency, occurred_at, payload, payload_hash)
+             VALUES ($1, $2, $3, $4, $5, 'ARS', clock_timestamp(), '{}', 'hash_perm')`,
+            [evId, tipo, txId, MERCHANT_ID, amountCents.toString()],
+          );
+          return procesarEventoEnTx(client, {
+            event_id: evId,
+            type: tipo,
+            transaction_id: txId,
+            merchant_id: MERCHANT_ID,
+            amount_cents: amountCents,
+            currency: 'ARS',
+          });
         });
-      });
-    };
+      }
 
-    // 1. Llega payment.reversed primero
-    const resRev = await insertarYProcesar('payment.reversed', `evt_rev1_${txId}`);
-    assert.equal(resRev.diferido, true, 'Reversed inicial debe ser diferido');
+      // Verificar que para cada permutación el resultado final sea exacto
+      const txRes = await pool.query('SELECT status FROM transactions WHERE id = $1', [txId]);
+      assert.equal(txRes.rows[0].status, 'reversed', `Permutación ${perm.join('->')} debe terminar en reversed`);
 
-    // 2. Llega payment.approved segundo
-    const resApp = await insertarYProcesar('payment.approved', `evt_app1_${txId}`);
-    assert.equal(resApp.diferido, true, 'Approved sin created debe ser diferido');
+      const movRes = await pool.query(
+        'SELECT kind, amount_cents FROM ledger_movements WHERE transaction_id = $1 ORDER BY id ASC',
+        [txId],
+      );
+      assert.equal(movRes.rows.length, 2, `Permutación ${perm.join('->')} debe tener 2 movimientos`);
+      assert.equal(movRes.rows[0].kind, 'payment_credit');
+      assert.equal(movRes.rows[1].kind, 'payment_reversal');
+      assert.equal(
+        BigInt(movRes.rows[0].amount_cents) + BigInt(movRes.rows[1].amount_cents),
+        0n,
+        `Permutación ${perm.join('->')} debe tener efecto neto cero`,
+      );
 
-    // 3. Llega payment.created tercero (desencadena resolución en punto fijo)
-    const resCre = await insertarYProcesar('payment.created', `evt_cre1_${txId}`);
-    assert.equal(resCre.procesado, true);
-
-    // Verificar estado final de la transacción
-    const txRes = await pool.query('SELECT status FROM transactions WHERE id = $1', [txId]);
-    assert.equal(txRes.rows[0].status, 'reversed', 'La transacción debe quedar en status reversed');
-
-    // Verificar movimientos del ledger
-    const movRes = await pool.query(
-      'SELECT kind, amount_cents FROM ledger_movements WHERE transaction_id = $1 ORDER BY id ASC',
-      [txId],
-    );
-    assert.equal(movRes.rows.length, 2, 'Deben registrarse exactamente 2 movimientos: crédito y reversa');
-    assert.equal(movRes.rows[0].kind, 'payment_credit');
-    assert.equal(movRes.rows[1].kind, 'payment_reversal');
-    assert.equal(
-      BigInt(movRes.rows[0].amount_cents) + BigInt(movRes.rows[1].amount_cents),
-      0n,
-      'El saldo neto debe ser exactamente cero',
-    );
-
-    // Verificar que los 3 eventos en inbox queden como processed (ninguno falsamente marcado como invalid)
-    const evtsRes = await pool.query(
-      'SELECT status FROM inbox_events WHERE transaction_id = $1',
-      [txId],
-    );
-    for (const row of evtsRes.rows) {
-      assert.equal(row.status, 'processed', 'Todos los eventos aplicados deben quedar en status processed');
+      const evtsRes = await pool.query('SELECT status FROM inbox_events WHERE transaction_id = $1', [txId]);
+      for (const row of evtsRes.rows) {
+        assert.equal(row.status, 'processed', `En permutación ${perm.join('->')} todo evento debe ser processed`);
+      }
     }
   });
 
@@ -627,6 +626,63 @@ describe('Tests de integración contra DB real', () => {
     // Saldo final nunca debe ser negativo
     const balFinal = JSON.parse((await app.inject({ method: 'GET', url: '/merchants/me/balance', headers: { 'x-api-key': API_KEY } })).payload);
     assert.ok(Number.parseFloat(balFinal.available) >= 0, 'El saldo disponible nunca debe ser negativo');
+  });
+
+  test('Concurrencia cruzada: Reversal y Payout simultáneos se serializan con lock pesimista sobre el comercio', async () => {
+    const txId = `tx_cross_${Date.now()}`;
+    const evCreatedId = `evt_c_${txId}`;
+    const evApprovedId = `evt_a_${txId}`;
+    const evReversedId = `evt_r_${txId}`;
+
+    // 1. Acreditar exactamente 200.00 ARS brutos al comercio
+    await pool.query(
+      `INSERT INTO inbox_events
+         (event_id, type, transaction_id, merchant_id, amount_cents, currency, occurred_at, payload, payload_hash)
+       VALUES
+         ($1, 'payment.created', $2, $3, '20000', 'ARS', clock_timestamp(), '{}', 'hx1'),
+         ($4, 'payment.approved', $2, $3, '20000', 'ARS', clock_timestamp(), '{}', 'hx2'),
+         ($5, 'payment.reversed', $2, $3, '20000', 'ARS', clock_timestamp(), '{}', 'hx3')`,
+      [evCreatedId, txId, MERCHANT_ID, evApprovedId, evReversedId],
+    );
+
+    await enTransaccion(pool, async (client) => {
+      await procesarEventoEnTx(client, { event_id: evCreatedId, type: 'payment.created', transaction_id: txId, merchant_id: MERCHANT_ID, amount_cents: 20000n, currency: 'ARS' });
+      await procesarEventoEnTx(client, { event_id: evApprovedId, type: 'payment.approved', transaction_id: txId, merchant_id: MERCHANT_ID, amount_cents: 20000n, currency: 'ARS' });
+    });
+
+    // 2. Disparar Payout de 195.00 (el neto acreditado con 2,5% es 195.00) y Reversal de 195.00 en paralelo
+    const promesas = [
+      app.inject({
+        method: 'POST',
+        url: '/payouts',
+        headers: {
+          'x-api-key': API_KEY,
+          'idempotency-key': `idemp_cross_${Date.now()}`,
+          'content-type': 'application/json',
+        },
+        payload: { amount: '195.00' },
+      }),
+      enTransaccion(pool, async (client) => {
+        return procesarEventoEnTx(client, {
+          event_id: evReversedId,
+          type: 'payment.reversed',
+          transaction_id: txId,
+          merchant_id: MERCHANT_ID,
+          amount_cents: 20000n,
+          currency: 'ARS',
+        });
+      }),
+    ];
+
+    const [resPayout, resReversal] = await Promise.all(promesas);
+
+    // Ambos terminan sin errores no manejados ni deadlocks de base de datos
+    assert.ok([201, 422].includes(resPayout.statusCode), 'Payout responde 201 si ganó la carrera o 422 si la reversa ganó primero');
+    assert.equal(resReversal.procesado, true, 'La reversa siempre se procesa con éxito');
+
+    // Verificar que la transacción en transactions quedó en reversed
+    const txRow = await pool.query('SELECT status FROM transactions WHERE id = $1', [txId]);
+    assert.equal(txRow.rows[0].status, 'reversed');
   });
 
   test('Validaciones robustas: limit=abc devuelve 400 y errores 500 no filtran detalles internos', async () => {

@@ -98,6 +98,9 @@ export async function procesarEventoEnTx(client, evento, logger = console, esRei
         [evento.merchant_id, evento.transaction_id, evento.event_id, bruto.toString(), comision.toString(), neto.toString()],
       );
     } else if (decision.efecto === 'debitar') {
+      // Serializar con payouts concurrentes sobre el saldo del comercio
+      await client.query('SELECT id FROM merchants WHERE id = $1 FOR UPDATE', [evento.merchant_id]);
+
       // Reversa: debita exactamente el monto neto que fue acreditado
       const credRes = await client.query(
         `SELECT gross_cents, fee_cents, amount_cents
