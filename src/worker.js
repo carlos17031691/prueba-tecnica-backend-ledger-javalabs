@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { cargarConfig } from './config.js';
 import { crearPool, enTransaccion } from './db/pool.js';
 import { procesarEventoEnTx } from './domain/eventProcessor.js';
@@ -11,8 +12,8 @@ const pool = crearPool({
 
 let corriendo = true;
 
-async function tomarYProcesarSiguiente() {
-  return enTransaccion(pool, async (client) => {
+export async function tomarYProcesarSiguiente(p = pool, cfg = config) {
+  return enTransaccion(p, async (client) => {
     // Tomar 1 evento pendiente usando SKIP LOCKED para evitar colisiones entre workers
     const res = await client.query(`
       SELECT event_id, type, transaction_id, merchant_id, amount_cents, currency, attempts
@@ -28,11 +29,19 @@ async function tomarYProcesarSiguiente() {
     const evento = res.rows[0];
 
     try {
-      await procesarEventoEnTx(client, evento);
-      return true;
+      // SAVEPOINT para aislar fallos de procesamiento y evitar abortar la transacción externa
+      await client.query('SAVEPOINT evento_sp');
+      try {
+        await procesarEventoEnTx(client, evento);
+        await client.query('RELEASE SAVEPOINT evento_sp');
+        return true;
+      } catch (err) {
+        await client.query('ROLLBACK TO SAVEPOINT evento_sp');
+        throw err;
+      }
     } catch (err) {
       const intentos = evento.attempts + 1;
-      const fallido = intentos >= config.workerMaxIntentos;
+      const fallido = intentos >= cfg.workerMaxIntentos;
       const estado = fallido ? 'failed' : 'received';
       // Backoff simple para reintentos
       const delaySeg = Math.min(2 ** intentos, 60);
@@ -66,11 +75,6 @@ async function loopWorker(id) {
   }
 }
 
-console.log(`Iniciando worker con concurrencia ${config.workerConcurrencia}...`);
-for (let i = 0; i < config.workerConcurrencia; i++) {
-  loopWorker(i);
-}
-
 async function apagar() {
   console.log('Apagando workers...');
   corriendo = false;
@@ -78,5 +82,11 @@ async function apagar() {
   process.exit(0);
 }
 
-process.on('SIGTERM', apagar);
-process.on('SIGINT', apagar);
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  console.log(`Iniciando worker con concurrencia ${config.workerConcurrencia}...`);
+  for (let i = 0; i < config.workerConcurrencia; i++) {
+    loopWorker(i);
+  }
+  process.on('SIGTERM', apagar);
+  process.on('SIGINT', apagar);
+}

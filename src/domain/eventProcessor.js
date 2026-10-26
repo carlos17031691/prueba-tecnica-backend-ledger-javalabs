@@ -3,7 +3,7 @@ import { decidir } from './stateMachine.js';
 
 // Procesa un evento del inbox sobre la base de datos dentro de una transacción activa.
 // Retorna { procesado: boolean, estadoFinal: string, motivo?: string }
-export async function procesarEventoEnTx(client, evento, logger = console) {
+export async function procesarEventoEnTx(client, evento, logger = console, esReintentoDiferido = false) {
   // Lock por transacción usando advisory lock para serializar concurrentes sobre la misma tx
   await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [evento.transaction_id]);
 
@@ -49,8 +49,8 @@ export async function procesarEventoEnTx(client, evento, logger = console) {
       await client.query(
         `UPDATE inbox_events
          SET status = 'invalid', reason = 'merchant_not_found', processed_at = clock_timestamp()
-         WHERE event_id = $2`,
-        ['merchant_not_found', evento.event_id],
+         WHERE event_id = $1`,
+        [evento.event_id],
       );
       return { procesado: true, estadoFinal: null, motivo: 'merchant_not_found' };
     }
@@ -69,7 +69,9 @@ export async function procesarEventoEnTx(client, evento, logger = console) {
     );
 
     // Intentar resolver diferidos de esta transacción
-    await reintentarDiferidos(client, evento.transaction_id, logger);
+    if (!esReintentoDiferido) {
+      await reintentarDiferidos(client, evento.transaction_id, logger);
+    }
 
     return { procesado: true, estadoFinal: decision.nuevoEstado };
   }
@@ -125,7 +127,9 @@ export async function procesarEventoEnTx(client, evento, logger = console) {
     );
 
     // Intentar resolver otros diferidos de esta transacción (ej. si reversed estaba esperando approved)
-    await reintentarDiferidos(client, evento.transaction_id, logger);
+    if (!esReintentoDiferido) {
+      await reintentarDiferidos(client, evento.transaction_id, logger);
+    }
 
     return { procesado: true, estadoFinal: decision.nuevoEstado };
   }
@@ -134,19 +138,38 @@ export async function procesarEventoEnTx(client, evento, logger = console) {
 }
 
 async function reintentarDiferidos(client, transactionId, logger) {
-  const { rows } = await client.query(
-    `SELECT event_id, type, transaction_id, merchant_id, amount_cents, currency
-     FROM inbox_events
-     WHERE transaction_id = $1 AND status = 'deferred'
-     ORDER BY occurred_at ASC, received_at ASC`,
-    [transactionId],
-  );
+  // Bucle de punto fijo: mientras haya progreso (al menos un evento procesado),
+  // se siguen reintentando los diferidos pendientes sin frenar ante el primero que siga diferido.
+  let huboProgreso = true;
+  while (huboProgreso) {
+    huboProgreso = false;
 
-  for (const deferred of rows) {
-    const res = await procesarEventoEnTx(client, deferred, logger);
-    if (!res.procesado && res.diferido) {
-      // Sigue diferido, parar la cadena de diferidos
-      break;
+    const { rows } = await client.query(
+      `SELECT event_id, type, transaction_id, merchant_id, amount_cents, currency
+       FROM inbox_events
+       WHERE transaction_id = $1 AND status = 'deferred'
+       ORDER BY occurred_at ASC, received_at ASC`,
+      [transactionId],
+    );
+
+    if (rows.length === 0) break;
+
+    for (const deferred of rows) {
+      // Re-verificar que siga diferido antes de procesar para evitar estados obsoletos
+      const checkRes = await client.query(
+        'SELECT status FROM inbox_events WHERE event_id = $1',
+        [deferred.event_id],
+      );
+      if (checkRes.rows.length === 0 || checkRes.rows[0].status !== 'deferred') {
+        continue;
+      }
+
+      const res = await procesarEventoEnTx(client, deferred, logger, true);
+      if (res.procesado) {
+        huboProgreso = true;
+        // Al procesar un evento cambió el estado de la transacción; reconsultar la lista actualizada
+        break;
+      }
     }
   }
 }
