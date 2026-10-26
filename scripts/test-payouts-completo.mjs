@@ -24,7 +24,7 @@ void (async () => {
     const ev = { event_id: 'ev_'+tx+'_'+t[0], type: 'payment.'+t, occurred_at: new Date().toISOString(), data: { transaction_id: tx, merchant_id: 'm_001', amount: '1000.00', currency: 'ARS' } };
     const body = JSON.stringify(ev);
     const r = await fetch(BASE + '/webhooks/psp', { method:'POST', headers:{'content-type':'application/json','x-psp-timestamp':ts(),'x-psp-signature':sign(ts(),body)}, body });
-    console.log('webhook ' + String(t) + ':', r.status);
+    console.log('webhook ' + String(t).replace(/[\r\n]/g,'') + ':', Number(r.status));
   }
   await new Promise(r=>setTimeout(r,3000));
   
@@ -34,25 +34,25 @@ void (async () => {
   const key = 'pk_' + randomUUID();
   
   console.log('\n3) sin Idempotency-Key -> 400');
-  console.log((await fetch(BASE+'/payouts',{method:'POST',headers:hdr(),body:JSON.stringify({amount:'10.00'})})).status);
+  console.log(Number((await fetch(BASE+'/payouts',{method:'POST',headers:hdr(),body:JSON.stringify({amount:'10.00'})})).status));
   
   console.log('4) key vacía -> 400');
-  console.log((await fetch(BASE+'/payouts',{method:'POST',headers:{...hdr(),'idempotency-key':''},body:JSON.stringify({amount:'10.00'})})).status);
+  console.log(Number((await fetch(BASE+'/payouts',{method:'POST',headers:{...hdr(),'idempotency-key':''},body:JSON.stringify({amount:'10.00'})})).status));
   
   console.log('5) saldo insuficiente -> 422');
-  console.log((await fetch(BASE+'/payouts',{method:'POST',headers:{...hdr(),'idempotency-key':'x'},body:JSON.stringify({amount:'999999999.00'})})).status);
+  console.log(Number((await fetch(BASE+'/payouts',{method:'POST',headers:{...hdr(),'idempotency-key':'x'},body:JSON.stringify({amount:'999999999.00'})})).status));
   
   console.log('\n6) payout 50.00 -> 201');
   let res = await fetch(BASE+'/payouts',{method:'POST',headers:{...hdr(),'idempotency-key':key},body:JSON.stringify({amount:'50.00'})});
-  console.log(res.status, JSON.stringify(await res.text()));
+  console.log(Number(res.status), JSON.stringify(String(await res.text()).replace(/\r?\n|\r/g,'')));
   
   console.log('\n7) replay mismo body -> 200');
   res = await fetch(BASE+'/payouts',{method:'POST',headers:{...hdr(),'idempotency-key':key},body:JSON.stringify({amount:'50.00'})});
-  console.log(res.status);
+  console.log(Number(res.status));
   
   console.log('8) mismo key body distinto -> 409');
   res = await fetch(BASE+'/payouts',{method:'POST',headers:{...hdr(),'idempotency-key':key},body:JSON.stringify({amount:'51.00'})});
-  console.log(res.status);
+  console.log(Number(res.status));
   
   console.log('\n9) saldo final');
   console.log(JSON.stringify(await j(await fetch(BASE + '/merchants/me/balance', { headers: hdr() }))));
